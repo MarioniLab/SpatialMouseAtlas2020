@@ -1,0 +1,238 @@
+---
+title: "E8.5 seqFISH section experiment 120919"
+author: "Shila Ghazanfar"
+date: "29/05/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 10 
+                     fig_height: 8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, 
+                      cache = FALSE, cache.lazy = FALSE)
+```
+
+# Summary
+
+This report generates processed data files for the SeqFISH experiment for 
+embryo3. This is only for the seqFISH library (not smFISH rounds), and includes 
+the updated dot calls Nico provided on 25 May 2020.
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+```
+
+```{r}
+source("spatial_functions.R")
+source("segmentation_functions.R")
+```
+
+# Set sample specific file paths - manual check
+
+```{r}
+fov_info_file = "../Data/TimEmbryos-120919/output/cellinfo/fovinfo.csv"
+mRNA_files_dir = "../Data/TimEmbryos-120919/output/1error-sqrt6-pointsratio-2020-05-23/"
+cell_files_dir = "../Data/TimEmbryos-120919/output/1error-sqrt6-pointsratio-2020-05-23/"
+segmentation_files_dir = "../Data/TimEmbryos-120919/segmentation/"
+
+processed_dir = "../Data/TimEmbryos-120919/processed/"
+processed_suffix = "120919"
+
+updateFiles = FALSE
+# updated_mRNA_files_dir = "../Data/TimEmbryos-120919/output/1error-sqrt6-lowerthreshold-2020-04-24/"
+# updated_cell_files_dir = "../Data/TimEmbryos-120919/output/1error-sqrt6-lowerthreshold-2020-04-24/"
+```
+
+# Load mRNA dot information
+
+Convert the mRNA dot table into a SingleCellExperiment object. Using the cell
+segmentation information.
+
+```{r}
+fov_info = read.csv(fov_info_file, header = TRUE, row.names = 1)
+rownames(fov_info) <- paste0("fov.",rownames(fov_info))
+
+mRNA_files = list.files(mRNA_files_dir, pattern = "segmented", full.names = TRUE)
+mRNA_files
+length(mRNA_files)
+
+cell_files = list.files(cell_files_dir, pattern = "cellData", full.names = TRUE)
+cell_files
+length(cell_files)
+```
+
+<!-- # Update mRNA files to new thresholding 24 April 2020 -->
+
+```{r}
+if (updateFiles) {
+  updated_mRNA_files = list.files(updated_mRNA_files_dir,
+                                  pattern = "segmented", full.names = TRUE)
+  
+  # order is very important!! first files are prioritised
+  all_mRNA_files = c(updated_mRNA_files, mRNA_files)
+  all_mRNA_files_pos = sapply(all_mRNA_files, function(x){
+    pos_val_raw = unlist(strsplit(x, "-"))
+    pos_val = grep("Pos[0-9]", pos_val_raw, value = TRUE)
+    return(pos_val)
+  })
+  all_mRNA_files_pos
+  
+  # reassign the mRNA files
+  mRNA_files <- all_mRNA_files[!duplicated(all_mRNA_files_pos)]
+  mRNA_files
+  length(mRNA_files)
+}
+```
+
+<!-- # Update cell files to new thresholding 24 April 2020 -->
+
+```{r}
+if (updateFiles) {
+  updated_cell_files = list.files(updated_cell_files_dir,
+                                  pattern = "cellData", full.names = TRUE)
+  
+  # order is very important!! first files are prioritised
+  all_cell_files = c(updated_cell_files, cell_files)
+  all_cell_files_pos = sapply(all_cell_files, function(x){
+    pos_val_raw = unlist(strsplit(x, "-"))
+    pos_val = grep("Pos[0-9]", pos_val_raw, value = TRUE)
+    return(pos_val)
+  })
+  all_cell_files_pos
+  
+  # reassign the cell files
+  cell_files <- all_cell_files[!duplicated(all_cell_files_pos)]
+  cell_files
+  length(cell_files)
+}
+```
+
+# Set embryo and Estage labels - manual check
+
+```{r}
+embryo_label = rep("embryo3", length(cell_files))
+names(embryo_label) <- paste0("fov.", 1:length(cell_files))
+
+Estage_label = rep("E8.5", length(cell_files))
+names(Estage_label) <- paste0("fov.", 1:length(cell_files))
+```
+
+# Get all genes, these are currently only seqFISH barcoded genes
+
+```{r}
+allgenes = sort(unique(unlist(sapply(mRNA_files, function(mRNA_file) {
+  mRNA_df_raw = read.csv(mRNA_file, header = TRUE)
+  return(as.character(unique(mRNA_df_raw$geneID)))
+}, simplify = FALSE
+))))
+length(allgenes)
+```
+
+# Build params object
+
+```{r}
+params = list(
+  fov_info_file = fov_info_file,
+  mRNA_files_dir = mRNA_files_dir,
+  cell_files_dir = cell_files_dir,
+  segmentation_files_dir = segmentation_files_dir,
+  processed_dir = processed_dir,
+  processed_suffix = processed_suffix,
+  fov_info = fov_info,
+  mRNA_files = mRNA_files,
+  cell_files = cell_files,
+  embryo_label = embryo_label,
+  Estage_label = Estage_label,
+  allgenes = allgenes
+)
+```
+
+# Function to process
+
+Located in spatial_functions.R as `processSeqFISH`.
+
+```{r}
+out = processSeqFISH(params)
+list2env(out, globalenv())
+```
+
+```{r}
+sce = do.call(cbind, mRNA_sceList)
+sce
+head(colData(sce))
+saveRDS(sce, file = paste0(
+  processed_dir,
+  "sce_all-",
+  processed_suffix,
+  ".Rds"))
+
+mRNA_df = do.call(rbind, mRNA_dfList)
+rownames(mRNA_df) <- NULL
+dim(mRNA_df)
+head(mRNA_df)
+saveRDS(mRNA_df, file = paste0(
+  processed_dir,
+  "mRNA_df-",
+  processed_suffix,
+  ".Rds"))
+
+boundary_polygons = getSegmentationVerticesDF(colData(sce))
+dim(boundary_polygons)
+head(boundary_polygons)
+saveRDS(boundary_polygons, file = paste0(
+  processed_dir,
+  "boundary_polygons-",
+  processed_suffix,
+  ".Rds"))
+```
+
+```{r, fig.height = 24}
+g = ggplot(boundary_polygons, aes(x = segmentation_vertices_x_global, 
+                                  y = -segmentation_vertices_y_global)) + 
+  geom_polygon(aes(group = uniqueID), show.legend = FALSE, 
+               colour = "black", fill = NA, size = 0.2) + 
+  theme_classic() +
+  coord_fixed() +
+  facet_wrap(~z)
+print(g)
+
+long_df = data.frame(fov = rep(rownames(fov_info), each = 4),
+                     x = c(t(fov_info[,c("bound_x_1","bound_x_4", "bound_x_3", "bound_x_2")])),
+                     y = c(t(fov_info[,c("bound_y_1","bound_y_4", "bound_y_3", "bound_y_2")]))
+)
+
+gg = g + 
+  geom_polygon(aes(group = fov, x = x, y = -y), 
+               fill = NA, colour = "red", size = 0.2,
+               data = long_df, inherit.aes = FALSE) + 
+  NULL
+
+ggplot(long_df, aes(x = x, y = -y)) + 
+  geom_polygon(fill = "black", aes(group = fov), colour = NA, size = 0.2) + 
+  theme_classic() + 
+  coord_fixed() + 
+  NULL
+print(gg)
+```
+
+```{r}
+sessionInfo()
+```

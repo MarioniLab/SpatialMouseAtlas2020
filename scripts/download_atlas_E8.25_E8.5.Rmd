@@ -1,0 +1,84 @@
+---
+title: "Mouse Gastrulation Atlas download - E8.25 and E8.5"
+author: "Shila Ghazanfar"
+date: "24/04/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 10 
+                     fig_height: 8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = TRUE,cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+Grab E8.25 and E8.5 mouse gastrulation atlas data.
+
+```{r}
+library(MouseGastrulationData)
+```
+
+```{r}
+meta = AtlasSampleMetadata
+meta
+
+meta_sub = subset(meta, stage %in% c("E8.5", "E8.25"))
+meta_sub
+```
+
+# Download data
+
+```{r}
+sce <- EmbryoAtlasData(samples = meta_sub$sample)
+sce
+```
+
+# Remove stripped and doublet cells
+
+```{r}
+singlets <- which(!(colData(sce)$doublet | colData(sce)$stripped))
+length(singlets)
+sce_filt <- sce[,singlets]
+sce_filt
+```
+
+```{r}
+plot(
+    x = reducedDim(sce_filt, "umap")[, 1],
+    y = reducedDim(sce_filt, "umap")[, 2],
+    col = EmbryoCelltypeColours[colData(sce_filt)$celltype],
+    pch = 19,
+    xaxt = "n", yaxt = "n",
+    xlab = "UMAP1", ylab = "UMAP2"
+)
+```
+
+Switch to gene symbol for rownames
+
+```{r}
+rowData(sce_filt)$SymbolUniq <- make.unique(rowData(sce_filt)$SYMBOL)
+rownames(sce_filt) <- rowData(sce_filt)$SymbolUniq
+```
+
+# Save output
+
+```{r}
+saveRDS(sce_filt, file = "../Data/atlas/sce_atlas_E8.25_E8.5.Rds")
+saveRDS(colData(sce_filt), file = "../Data/atlas/cData_atlas_E8.25_E8.5.Rds")
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,638 @@
+---
+title: "E8.5 seqFISH - Processing and exploratory analysis"
+author: "Shila Ghazanfar"
+date: "05/06/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 10 
+                     fig_height: 8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = TRUE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+# Summary
+
+In this report we perform joint analysis of three E8.5 embryos, and output
+joint data files with associated measured and predicted metadata. Note these 
+objects contain 351 genes for the barcoded genes, not the extra 36 smFISH genes. 
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+```
+
+Load spatial and segmentation functions.
+
+```{r}
+source("spatial_functions.R")
+source("segmentation_functions.R")
+source("celltype_colours.R")
+source("neighbourSegments.R")
+```
+
+# Load spatial cell and mRNA data
+
+```{r}
+sce = readRDS("../analysis_output/E8.5/E8.5_sce_unfiltered.Rds")
+mRNA_df = readRDS("../analysis_output/E8.5/E8.5_mRNA_df_unfiltered.Rds")
+```
+
+# Graph using boundaries
+
+```{r}
+boundary_polygons = getSegmentationVerticesDF(
+  colData(sce),
+  xname = "segmentation_vertices_x_global_affine",
+  yname = "segmentation_vertices_y_global_affine",
+  othercols = c("uniqueID","z","embryo","pos"))
+
+boundary_bbox = do.call(
+  rbind,
+  lapply(
+    split.data.frame(boundary_polygons, 
+                     list(boundary_polygons$pos,
+                          boundary_polygons$embryo,
+                          boundary_polygons$z)),
+    function(df) cbind(as.data.frame(t(make_bbox(segmentation_vertices_x_global_affine,
+                                                 segmentation_vertices_y_global_affine,
+                                                 data = df, f = 0))),
+                       embryo = df$embryo[1],
+                       pos = df$pos[1],
+                       z = df$z[1]))
+)
+boundary_bbox <- na.omit(boundary_bbox)
+```
+
+```{r, fig.height=24}
+for (zval in unique(boundary_polygons$z)) {
+  
+  g = ggplot(subset(boundary_polygons, z %in% zval)) + 
+    geom_polygon(aes(group = uniqueID,
+                     x = segmentation_vertices_x_global_affine,
+                     y = -segmentation_vertices_y_global_affine), fill = NA, colour = "black") + 
+    facet_wrap(embryo~z, nrow = 3) +
+    coord_fixed() +
+    theme_classic() +
+    NULL
+  print(g)
+  
+  gg = g + geom_rect(data = subset(boundary_bbox, z %in% zval),
+                     aes(xmin = left, 
+                         xmax = right,
+                         ymin = -top,
+                         ymax = -bottom),
+                     color="red", fill= "transparent") + 
+    NULL
+  print(gg)
+}
+```
+
+# Basic Exploration
+
+Calculate QC metrics and extract the column data as a separate object
+
+```{r}
+cData = as.data.frame(colData(sce))
+```
+
+```{r}
+ggplot(cData,
+       aes(x = embryo_pos, y = log10(1+total),
+           fill = embryo)) +
+  geom_boxplot(outlier.size = 0.5) + 
+  ggtitle("Total counts per FOV") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(legend.position = "bottom") +
+  NULL
+
+ggplot(cData,
+       aes(x = embryo_pos, y = log10(1+total),
+           fill = embryo)) +
+  geom_boxplot(outlier.size = 0.5) + 
+  ggtitle("Total counts per FOV") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(legend.position = "bottom") +
+  facet_wrap(~z) +
+  NULL
+
+ggplot(cData,
+       aes(x = embryo, y = log10(1+total))) +
+  geom_boxplot(outlier.size = 0.5) + 
+  ggtitle("Total counts per cell") +
+  theme_classic() +
+  NULL
+
+ggplot(cData,
+       aes(x = embryo, y = log10(1+total))) +
+  geom_boxplot(outlier.size = 0.5) + 
+  ggtitle("Total counts per cell") +
+  theme_classic() +
+  facet_wrap(~z) +
+  NULL
+
+ggplot(cData,
+       aes(x = embryo, y = detected)) +
+  geom_boxplot(outlier.size = 0.5) + 
+  ggtitle("Number of genes detected per cell") +
+  theme_classic() +
+  NULL
+
+ggplot(cData,
+       aes(x = embryo, y = detected)) +
+  geom_boxplot(outlier.size = 0.5) + 
+  ggtitle("Number of genes detected per cell") +
+  theme_classic() +
+  facet_wrap(~z) +
+  NULL
+
+ggplot(cData,
+       aes(x = embryo_pos, y = detected,
+           fill = embryo)) +
+  geom_boxplot(outlier.size = 0.5) + 
+  ggtitle("Number of genes detected per FOV") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  NULL
+
+ggplot(cData,
+       aes(x = embryo_pos, y = detected,
+           fill = embryo)) +
+  geom_boxplot(outlier.size = 0.5) + 
+  ggtitle("Number of genes detected per FOV") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  facet_wrap(~z) +
+  NULL
+
+
+ggplot(cData,
+       aes(x = embryo, y = detected)) +
+  geom_boxplot(outlier.size = 0.5) + 
+  ggtitle("Number of genes detected per cell") +
+  theme_classic() +
+  NULL
+
+ggplot(cData,
+       aes(x = embryo, y = detected)) +
+  geom_boxplot(outlier.size = 0.5) + 
+  ggtitle("Number of genes detected per cell") +
+  theme_classic() +
+  facet_wrap(~z) +
+  NULL
+```
+
+Is there a boundary effect?
+
+```{r}
+mid = function(x) {
+  mean(range(x))
+}
+cData$x_dist = abs(unsplit(tapply(cData$x_global_affine, cData$embryo_pos, mid), cData$embryo_pos) - cData$x_global_affine) 
+cData$y_dist = abs(unsplit(tapply(cData$y_global_affine, cData$embryo_pos, mid), cData$embryo_pos) - cData$y_global_affine) 
+cData$max_dist = pmax(cData$x_dist, cData$y_dist)
+cData$distanceToCentre = unsplit(tapply(cData$max_dist, cData$embryo_pos, function(x)x/max(abs(x))), cData$embryo_pos)
+
+ggplot(cData,
+       aes(x = x_global_affine, y = -y_global_affine, colour = distanceToCentre)) + 
+  geom_point(size = 0.2) + 
+  theme_classic() + 
+  coord_fixed() +
+  scale_colour_gradient(low = "black", high = "red") +
+  facet_wrap(~embryo) +
+  NULL
+
+ggplot(cData,
+       aes(x = distanceToCentre, y = detected,
+           colour = embryo)) +
+  geom_point(alpha = 0.2) + 
+  ggtitle("Total genes detected per cell") +
+  facet_wrap(~embryo) +
+  theme_classic() +
+  NULL
+cor(cData$distanceToCentre, cData$detected)
+
+ggplot(cData,
+       aes(x = distanceToCentre^4, y = detected,
+           colour = embryo)) +
+  geom_point(alpha = 0.2) + 
+  ggtitle("Total genes detected per cell") +
+  facet_wrap(~embryo) +
+  theme_classic() +
+  NULL
+
+ggplot(cData,
+       aes(x = cut(distanceToCentre, 50), y = detected,
+           colour = embryo,
+           fill = embryo)) +
+  geom_boxplot(outlier.size = 0.5) + 
+  facet_wrap(embryo~z) +
+  ggtitle("Total genes detected per cell") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme_classic() +
+  NULL
+
+ggplot(cData,
+       aes(x = cut(distanceToCentre, 50), y = log10(1+total),
+           colour = embryo,
+           fill = embryo)) +
+  geom_boxplot() + 
+  facet_wrap(embryo~z) +
+  ggtitle("Total counts per cell") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  NULL
+```
+
+We observe a very slight negative correlation between distance to the centre
+of the FOV and the expression detected, this really seems to be an issue right
+on the border of the FOV square.
+
+# Identify outlier segments that are unlikely to be cells
+
+```{r}
+ggplot(cData,
+       aes(x = log10(Area),
+           colour = embryo)) +
+  geom_density() +
+  facet_wrap(~z) +
+  ggtitle("Cell area") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  NULL
+
+ggplot(cData,
+       aes(x = log10(Area),
+           colour = factor(z))) +
+  geom_density() +
+  facet_wrap(~embryo) +
+  ggtitle("Cell area") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  NULL
+
+ggplot(cData,
+       aes(x = log10(Area),
+           colour = embryo_pos)) +
+  geom_density() +
+  facet_wrap(~z) +
+  ggtitle("Cell area split by field of views") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(legend.position = "none") +
+  NULL
+
+ggplot(cData,
+       aes(x = log10(Area),
+           group = interaction(embryo_pos, z),
+           colour = factor(z))) +
+  geom_density(alpha = 0.5) +
+  ggtitle("Cell area split by field of views") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(legend.position = "none") +
+  NULL
+
+ggplot(cData,
+       aes(x = log10(Area), y = detected,
+           colour = embryo,
+           alpha = 0.1)) +
+  geom_point() +
+  facet_wrap(~z) +
+  ggtitle("Total genes detected per FOV") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  NULL
+
+ggplot(cData,
+       aes(x = log10(Area), y = detected,
+           colour = factor(z),
+           alpha = 0.1)) +
+  geom_point() +
+  facet_wrap(~embryo) +
+  ggtitle("Total genes detected per FOV") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  NULL
+
+ggplot(cData,
+       aes(x = log10(Area), y = log10(1+total),
+           colour = embryo,
+           alpha = 0.1)) +
+  geom_point() +
+  facet_wrap(~z) +
+  ggtitle("Total counts detected per FOV") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  NULL
+
+ggplot(cData,
+       aes(x = log10(Area), y = log10(1+total),
+           colour = factor(z),
+           alpha = 0.1)) +
+  geom_point() +
+  facet_wrap(~embryo) +
+  ggtitle("Total counts detected per FOV") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  NULL
+```
+
+There are a subset of "cells" with unrealistically large size. We pose that
+these are segmentation objects that do not correspond to cells and should be 
+removed.
+
+We identify outlying "cells" by assuming that each cell is roughly spherical,
+and that its cross-sectional diameter is roughly normally distributed. We also
+note that the distributions across embryos and across positions are highly 
+similar, so we can perform a single test for all cells. At a FDR-corrected
+P-value level of 0.01, we test the (one-sided) deviation from normality for 
+cells.
+
+```{r}
+filterAreas
+
+cData$outlierSize = !filterAreas(cData$Area)
+
+table(cData$outlierSize)
+
+ggplot(cData,
+       aes(x = log10(Area), y = detected,
+           colour = outlierSize,
+           alpha = 0.1)) +
+  geom_point() +
+  facet_grid(embryo~z) +
+  ggtitle("Total genes detected") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  NULL
+
+ggplot(cData,
+       aes(x = log10(Area), y = log10(1+total),
+           colour = outlierSize,
+           alpha = 0.1)) +
+  geom_point() +
+  facet_grid(embryo~z) +
+  ggtitle("Total counts detected") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  NULL
+```
+
+# Filter for high quality cells
+
+We remove cells according to three criteria:
+* too large area
+* too few genes
+* too low counts
+
+```{r}
+keepCriteriaMatrix = 
+  cbind(
+    area_outlier = (!cData$outlierSize),
+    genes_detected = (cData$detected >= 5),
+    genes_total = (cData$total >= 10)
+  )
+head(keepCriteriaMatrix)
+
+UpSetR::upset(as.data.frame(1*keepCriteriaMatrix))
+
+UpSetR::upset(as.data.frame(1*keepCriteriaMatrix),
+              scale.intersections = "log10")
+
+keepCriteria <- apply(keepCriteriaMatrix,1,all)
+
+table(keepCriteria)
+
+sce_filt = sce[,keepCriteria]
+cData_filt = cData[keepCriteria,]
+
+mRNA_df_filt <- subset(mRNA_df, uniqueID %in% colnames(sce_filt))
+
+boundary_polygons <- subset(boundary_polygons, uniqueID %in% sce_filt$uniqueID)
+
+sce_filt
+dim(mRNA_df_filt)
+```
+
+# Normalise counts to cell area
+
+Assign the per-cell size factor as the square root of the area divided by the 
+mean area across all cells. Also perform typical library size scaling, for 
+potential comparisons in future.
+
+```{r}
+libsize_scaling = edgeR::calcNormFactors(counts(sce_filt))
+sizeFactors(sce_filt) <- libsize_scaling
+assay(sce_filt, "logcounts_libsize") <- logcounts(scater::logNormCounts(sce_filt))
+
+out_area = getAreaFactorsDirectly(sce_filt, transform = NULL)
+assay(sce_filt, "logcounts_area") <- out_area[["logcounts.area"]]
+
+# use area norm function defined in spatial_functions.R
+out_sqrt_area = getAreaFactorsDirectly(sce_filt, transform = sqrt)
+assay(sce_filt, "logcounts_sqrtarea") <- out_sqrt_area[["logcounts.area"]]
+# sizeFactors(sce_filt) <- out_area[["sizeFactors"]]
+sizeFactors(sce_filt) <- NULL
+```
+
+```{r}
+par(mfrow = c(2,2))
+plot(colSums(counts(sce_filt)), sce_filt$Area, col = alpha("black", 0.3))
+plot(colSums(counts(sce_filt)), sqrt(sce_filt$Area), col = alpha("black", 0.3))
+plot(colSums(counts(sce_filt)), log10(sce_filt$Area), col = alpha("black", 0.3))
+plot(colSums(counts(sce_filt)), 1/libsize_scaling, col = alpha("black", 0.3))
+
+par(mfrow = c(4,1))
+plot(density(sce_filt$Area))
+plot(density(sqrt(sce_filt$Area)))
+plot(density(log10(sce_filt$Area)))
+plot(density(colSums(counts(sce_filt))))
+
+plot(density(colSums(assay(sce_filt, "counts"))))
+plot(density(colSums(assay(sce_filt, "logcounts_libsize"))))
+plot(density(colSums(assay(sce_filt, "logcounts_area"))))
+plot(density(colSums(assay(sce_filt, "logcounts_sqrtarea"))))
+
+par(mfrow = c(2,2))
+boxplot(colSums(assay(sce_filt, "counts")) ~ sce_filt$z + sce_filt$embryo,
+        las = 2, xlab = "", main = "Counts")
+boxplot(colSums(assay(sce_filt, "logcounts_libsize")) ~ sce_filt$z + sce_filt$embryo,
+        las = 2, xlab = "", main = "Library size")
+boxplot(colSums(assay(sce_filt, "logcounts_area")) ~ sce_filt$z + sce_filt$embryo,
+        las = 2, xlab = "", main = "Area")
+boxplot(colSums(assay(sce_filt, "logcounts_sqrtarea")) ~ sce_filt$z + sce_filt$embryo,
+        las = 2, xlab = "", main = "sqrt Area")
+```
+
+There doesn't seem to be much of a difference, so we go with the most 
+intuitive conceptually.
+
+```{r}
+assay(sce_filt, "logcounts") <- assay(sce_filt, "logcounts_area")
+
+sce_filt
+```
+
+# PCA, batch correction, and UMAP
+
+Now perform PCA, batch correction and UMAP calculation.
+
+```{r}
+assay(sce_filt, "cosineNorm") <- cosineNorm(assay(sce_filt, "logcounts"))
+
+sce_filt <- scater::runPCA(sce_filt)
+
+mbpca = multiBatchPCA(assay(sce_filt, "cosineNorm"),
+                      batch = cData_filt$embryo_pos_z,
+                      preserve.single = TRUE)
+reducedDim(sce_filt, "mbPCA_cosine") <- mbpca[[1]]
+
+out = reducedMNN(mbpca[[1]], batch = cData_filt$embryo_pos_z)
+
+reducedDim(sce_filt, "mbPCA_cosine_MNN") <- out$corrected
+
+sce_filt <- runUMAP(sce_filt, dimred = "mbPCA_cosine_MNN")
+sce_filt$UMAP1 <- reducedDim(sce_filt, "UMAP")[,1]
+sce_filt$UMAP2 <- reducedDim(sce_filt, "UMAP")[,2]
+
+cData_filt$UMAP1 <- reducedDim(sce_filt, "UMAP")[,1]
+cData_filt$UMAP2 <- reducedDim(sce_filt, "UMAP")[,2]
+```
+
+```{r}
+ggplot(cData_filt,
+       aes(x = UMAP1, y = UMAP2)) +
+  theme_classic() +
+  geom_point(alpha = 0.1, size = 1) +
+  theme(legend.position = "bottom") +
+  ggtitle("UMAP on all genes") +
+  NULL
+
+g = ggplot(cData_filt[sample(nrow(cData_filt)),],
+           aes(x = UMAP1, y = UMAP2)) +
+  theme_classic() +
+  geom_point(aes(colour = embryo), alpha = 0.1, size = 1) +
+  theme(legend.position = "bottom") +
+  ggtitle("UMAP on all genes") +
+  guides(colour = guide_legend(override.aes = list(alpha = 1, size = 5))) +
+  NULL
+g
+
+g + facet_wrap(~embryo)
+```
+
+```{r}
+g = ggplot(cData_filt,
+           aes(x = UMAP1, y = UMAP2)) +
+  theme_classic() +
+  geom_point(aes(colour = factor(z)),
+             alpha = 0.1, size = 1) +
+  theme(legend.position = "bottom") +
+  ggtitle("UMAP on all genes") +
+  scale_colour_discrete() +
+  NULL
+g
+
+g + facet_wrap(~embryo)
+
+ggplot(cData_filt,
+       aes(x = UMAP1, y = UMAP2)) +
+  theme_classic() +
+  geom_point(aes(colour = log2(1+total)),
+             size = 0.5) +
+  theme(legend.position = "bottom") +
+  scale_color_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                        midpoint = 0.5*max(log2(1+cData_filt$total), na.rm = TRUE)) +
+  ggtitle("UMAP on all genes") +
+  NULL
+
+ggplot(cData_filt,
+       aes(x = UMAP1, y = UMAP2)) +
+  theme_classic() +
+  geom_point(aes(colour = detected),
+             size = 0.5) +
+  scale_color_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                        midpoint = 0.5*max(cData_filt$detected, na.rm = TRUE)) +
+  theme(legend.position = "bottom") +
+  ggtitle("UMAP on all genes") +
+  NULL
+```
+
+Plot PC values in space
+
+```{r}
+# plot PC values to space
+for (pc_i in 1:20) {
+  pc_vals = reducedDim(sce_filt, "mbPCA_cosine_MNN")[,pc_i]
+  pc_cols = colorRampPalette(c("blue", "grey","red"))(100)[as.numeric(cut(pc_vals,100))]
+  names(pc_cols) <- names(pc_vals)
+  
+  g = ggplot(data = boundary_polygons) + 
+    geom_polygon(aes(x = segmentation_vertices_x_global_affine,
+                     y = -segmentation_vertices_y_global_affine,
+                     group = uniqueID,
+                     fill = uniqueID),
+                 colour = NA, size = 0.5) +
+    facet_wrap(embryo~z, nrow = 2) +
+    scale_fill_manual(values = pc_cols) +
+    theme_classic() +
+    coord_fixed() +
+    theme(legend.position = "none") +
+    ggtitle(paste0("PC: ", pc_i)) +
+    NULL
+  print(g)
+}
+```
+
+# Save output
+
+```{r}
+sce_filt
+dim(colData(sce_filt))
+head(colData(sce_filt))
+dim(cData_filt)
+head(cData_filt)
+dim(mRNA_df_filt)
+head(mRNA_df_filt)
+```
+
+```{r, eval = FALSE}
+saveRDS(sce_filt, file = "../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+saveRDS(cData_filt, file = "../analysis_output/E8.5/E8.5_cData_filt_unlabelled.Rds")
+saveRDS(mRNA_df_filt, file = "../analysis_output/E8.5/E8.5_mRNA_df_filt.Rds")
+```
+
+```{r}
+sessionInfo()
+```

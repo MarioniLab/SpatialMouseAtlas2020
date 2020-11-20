@@ -1,0 +1,390 @@
+---
+title: "E8.5 seqFISH - Combine E8.5 experiments and affine scaling"
+author: "Shila Ghazanfar"
+date: "04/06/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 10 
+                     fig_height: 8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = FALSE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+# Summary
+
+In this report we take the individual experiment files for the E8.5 embryos, 
+and output joint data files, with affine scaled coordinates. Note these 
+objects contain 351 genes for the barcoded genes, not the extra 36 smFISH 
+genes. 
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+```
+
+Load spatial and segmentation functions.
+
+```{r}
+source("spatial_functions.R")
+source("segmentation_functions.R")
+source("celltype_colours.R")
+source("neighbourSegments.R")
+```
+
+# Load mRNA data and merge
+
+```{r}
+mRNA_df_12 = readRDS("../Data/TimEmbryos-102219/processed/mRNA_df-102219.Rds")
+head(mRNA_df_12)
+mRNA_df_3 = readRDS("../Data/TimEmbryos-120919/processed/mRNA_df-120919.Rds")
+head(mRNA_df_3)
+
+mRNA_df = rbind(mRNA_df_12, mRNA_df_3)
+rm(mRNA_df_12, mRNA_df_3)
+```
+
+# Load cell data and merge
+
+```{r}
+sce_12 = readRDS("../Data/TimEmbryos-102219/processed/sce_all-102219.Rds")
+sce_12
+sce_3 = readRDS("../Data/TimEmbryos-120919/processed/sce_all-120919.Rds")
+sce_3
+
+sum(counts(sce_12))
+sum(counts(sce_3))
+
+sce = cbind(sce_12,sce_3)
+sce
+colData(sce)
+rm(sce_12, sce_3)
+```
+
+# Affine scaling of embryos in space
+
+Affine scaling here consists of three steps:
+
+* divide by the width/height of the fov square, here entered manually
+* centre by subtracting the midpoint coordinate
+* flip some embryos for the same top-down and left-right orientation
+Having done this means that the embryos are on the same physical scale
+to each other.
+
+```{r}
+# make a dataframe that says what needs to be done for the coordinates for each
+# embryo
+# 1. scale, 2. center, 3. flip
+# still hardcoded so beware!
+
+affine_df = data.frame(
+  embryo = c("embryo1", "embryo2","embryo3"),
+  scaleFactor_x = c(31,31,64),
+  scaleFactor_y = c(31,31,64),
+  midpoint_x = tapply(colData(sce)$x_global,colData(sce)$embryo,function(x)mean(range(x))),
+  midpoint_y = tapply(colData(sce)$y_global,colData(sce)$embryo,function(x)mean(range(x))),
+  flip_x = c(FALSE,TRUE,TRUE),
+  flip_y = c(FALSE,FALSE,FALSE), 
+  angle = c(0,-20,-35)
+)
+
+affine_df
+
+angles = affine_df$angle
+names(angles) <- rownames(affine_df)
+
+x_global_scaled <- colData(sce)$x_global/affine_df[colData(sce)$embryo,"scaleFactor_x"]
+
+y_global_scaled <- colData(sce)$y_global/affine_df[colData(sce)$embryo,"scaleFactor_y"]
+
+x_global_scaled_centred = x_global_scaled - affine_df[colData(sce)$embryo,"midpoint_x"]/affine_df[colData(sce)$embryo,"scaleFactor_x"]
+
+y_global_scaled_centred = y_global_scaled - affine_df[colData(sce)$embryo,"midpoint_y"]/affine_df[colData(sce)$embryo,"scaleFactor_y"]
+
+x_global_scaled_centred_flipped = x_global_scaled_centred*ifelse(affine_df[colData(sce)$embryo, "flip_x"], -1, 1)
+
+y_global_scaled_centred_flipped = y_global_scaled_centred*ifelse(affine_df[colData(sce)$embryo, "flip_y"], -1, 1)
+
+df_global_scaled_centred_flipped = data.frame(embryo = sce$embryo,
+                                              x = x_global_scaled_centred_flipped,
+                                              y = y_global_scaled_centred_flipped)
+out = rotateDF(df_global_scaled_centred_flipped, x = "x", y = "y", ang = angles)
+
+colData(sce)$x_global_affine <- out$x
+colData(sce)$y_global_affine <- out$y
+
+# scaled and centred and flipped
+g = ggplot(as.data.frame(colData(sce))) + 
+  geom_point(aes(x = x_global_affine,
+                 y = -y_global_affine,
+                 colour = embryo), fill = NA, size = 0.5, alpha = 0.15) + 
+  coord_fixed() +
+  theme_classic() +
+  ggtitle("All cells in affine scaling") +
+  NULL
+g
+
+g + facet_grid(z~embryo)
+```
+
+Also do this with the segmentation numericLists. This takes a long time to run.
+
+```{r}
+x_global_segments <- colData(sce)$segmentation_vertices_x_global
+
+x_global_segments_affine = sapply(names(x_global_segments), function(n) {
+  
+  # print(n)
+  
+  x_global_segment <- x_global_segments[[n]]
+  if (length(x_global_segment) == 0) return(x_global_segment)
+  
+  embryo_val = colData(sce)[n,"embryo"]
+  
+  # 1. scale
+  x_global_segment_scaled <- x_global_segment/affine_df[embryo_val,"scaleFactor_x"]
+  
+  # 2. center - note to scale the center too!
+  x_global_segment_scaled_centred <- x_global_segment_scaled - affine_df[embryo_val,"midpoint_x"]/affine_df[embryo_val,"scaleFactor_x"]
+  
+  # 3. flip if needed
+  if (affine_df[embryo_val,"flip_x"]) {
+    x_global_segment_scaled_centred_flip = -x_global_segment_scaled_centred
+  } else {
+    x_global_segment_scaled_centred_flip <- x_global_segment_scaled_centred
+  }
+  
+  return(x_global_segment_scaled_centred_flip)
+}, simplify = FALSE)
+
+
+y_global_segments <- colData(sce)$segmentation_vertices_y_global
+
+y_global_segments_affine = sapply(names(y_global_segments), function(n) {
+  
+  # print(n)
+  
+  y_global_segment <- y_global_segments[[n]]
+  if (length(y_global_segment) == 0) return(y_global_segment)
+  
+  embryo_val = colData(sce)[n,"embryo"]
+  
+  # 1. scale
+  y_global_segment_scaled <- y_global_segment/affine_df[embryo_val,"scaleFactor_y"]
+  
+  # 2. center - note to scale the center too!
+  y_global_segment_scaled_centred <- y_global_segment_scaled - affine_df[embryo_val,"midpoint_y"]/affine_df[embryo_val,"scaleFactor_y"]
+  
+  # 3. flip if needed
+  if (affine_df[embryo_val,"flip_y"]) {
+    y_global_segment_scaled_centred_flip = -y_global_segment_scaled_centred
+  } else {
+    y_global_segment_scaled_centred_flip <- y_global_segment_scaled_centred
+  }
+  
+  return(y_global_segment_scaled_centred_flip)
+}, simplify = FALSE)
+
+x_global_segments_affine_rotated = x_global_segments_affine
+y_global_segments_affine_rotated = y_global_segments_affine
+
+# a list of dataframes
+# global_segments = sapply(names(y_global_segments), function(n) {
+
+for (n in names(y_global_segments)) {
+  
+  # print(n)
+  
+  if (length(x_global_segments_affine[[n]]) == 0) next
+  
+  if (FALSE) {
+    plot(x_global_segments_affine[[n]],
+         y_global_segments_affine[[n]], type = "l", xlim = c(-3,3), ylim= c(-3,3))
+  }
+  
+  df_global_scaled_centred_flipped = data.frame(embryo = as.character(colData(sce)[n,"embryo"]),
+                                                x = x_global_segments_affine[[n]],
+                                                y = y_global_segments_affine[[n]])
+  out = rotateDF(df_global_scaled_centred_flipped, xname = "x", yname = "y", ang = angles)
+  
+  if (FALSE) {
+    points(out$x,
+         out$y, type = "l", col = "blue")
+  }
+  
+  x_global_segments_affine_rotated[[n]] <- out$x
+  y_global_segments_affine_rotated[[n]] <- out$y
+  
+}
+
+colData(sce)$segmentation_vertices_x_global_affine <- IRanges::NumericList(x_global_segments_affine_rotated)
+colData(sce)$segmentation_vertices_y_global_affine <- IRanges::NumericList(y_global_segments_affine_rotated)
+```
+
+Also do this for the mRNA dataframes
+
+```{r}
+# 1. scale, 2. center, 3. flip if needed
+mRNA_x_global_affine <- mRNA_df$x_global
+for (embryo_val in as.character(unique(affine_df$embryo))) {
+  mRNA_x_global_affine[mRNA_df$embryo == embryo_val] <-
+    ((mRNA_df$x_global[mRNA_df$embryo == embryo_val]/affine_df[embryo_val,"scaleFactor_x"]) - affine_df[embryo_val,"midpoint_x"]/affine_df[embryo_val,"scaleFactor_x"])*(ifelse(affine_df[embryo_val,"flip_x"], -1, 1))
+}
+
+mRNA_y_global_affine <- mRNA_df$y_global
+for (embryo_val in as.character(unique(affine_df$embryo))) {
+  mRNA_y_global_affine[mRNA_df$embryo == embryo_val] <-
+    ((mRNA_df$y_global[mRNA_df$embryo == embryo_val]/affine_df[embryo_val,"scaleFactor_y"]) - affine_df[embryo_val,"midpoint_y"]/affine_df[embryo_val,"scaleFactor_y"])*(ifelse(affine_df[embryo_val,"flip_y"], -1, 1))
+}
+
+df_global_scaled_centred_flipped = data.frame(embryo = mRNA_df$embryo,
+                                              x = mRNA_x_global_affine,
+                                              y = mRNA_y_global_affine)
+out = rotateDF(df_global_scaled_centred_flipped, x = "x", y = "y", ang = angles)
+
+mRNA_df$x_global_affine <- out$x
+mRNA_df$y_global_affine <- out$y
+
+# mRNA_df$x_global_affine <- mRNA_x_global_affine
+# mRNA_df$y_global_affine <- mRNA_y_global_affine
+```
+
+# Graph using boundaries
+
+```{r}
+boundary_polygons = getSegmentationVerticesDF(
+  colData(sce),
+  xname = "segmentation_vertices_x_global_affine",
+  yname = "segmentation_vertices_y_global_affine",
+  othercols = c("uniqueID","z","embryo","pos"))
+
+boundary_bbox = do.call(
+  rbind,
+  lapply(
+    split.data.frame(boundary_polygons, 
+                     list(boundary_polygons$pos,
+                          boundary_polygons$embryo,
+                          boundary_polygons$z)),
+    function(df) cbind(as.data.frame(t(make_bbox(segmentation_vertices_x_global_affine,
+                                                 segmentation_vertices_y_global_affine,
+                                                 data = df, f = 0))),
+                       embryo = df$embryo[1],
+                       pos = df$pos[1],
+                       z = df$z[1]))
+)
+boundary_bbox <- na.omit(boundary_bbox)
+```
+
+
+```{r, fig.height=24}
+for (zval in unique(boundary_polygons$z)) {
+  
+  g = ggplot(subset(as.data.frame(colData(sce)), z %in% zval)) + 
+    geom_point(aes(group = uniqueID,
+                     x = x_global_affine,
+                     y = -y_global_affine), fill = NA, colour = "black") + 
+    facet_wrap(embryo~., nrow = 3) +
+    coord_fixed() +
+    theme_classic() +
+    ggtitle(zval) +
+    NULL
+  print(g)
+}
+```
+
+```{r, fig.height=24}
+for (zval in unique(boundary_polygons$z)) {
+  
+  g = ggplot(subset(boundary_polygons, z %in% zval)) + 
+    geom_polygon(aes(group = uniqueID,
+                     x = segmentation_vertices_x_global_affine,
+                     y = -segmentation_vertices_y_global_affine), fill = NA, colour = "black") + 
+    facet_wrap(embryo~., nrow = 3) +
+    coord_fixed() +
+    theme_classic() +
+    theme(legend.position = "none") +
+    ggtitle(zval) +
+    NULL
+  print(g)
+  
+  gg = g + geom_rect(data = subset(boundary_bbox, z %in% zval),
+                     aes(xmin = left, 
+                         xmax = right,
+                         ymin = -top,
+                         ymax = -bottom),
+                     color="red", fill= "transparent", linetype = "dotted") +
+    ggtitle("Horizontal Bounding box added") +
+    NULL    
+  print(gg)
+}
+```
+
+# Basic Exploration
+
+Calculate QC metrics and extract the column data as a separate object
+
+```{r}
+sce <- scater::addPerCellQC(sce)
+cData = as.data.frame(colData(sce))
+```
+
+```{r}
+cData$embryo_pos = factor(paste0(cData$embryo,"_", cData$pos),
+                          levels = mixedsort(unique(as.character(paste0(cData$embryo,"_", cData$pos)))))
+sce$embryo_pos <- cData$embryo_pos
+mRNA_df$embryo_pos = factor(paste0(mRNA_df$embryo,"_", mRNA_df$pos),
+                            levels = mixedsort(unique(as.character(paste0(mRNA_df$embryo,"_", mRNA_df$pos)))))
+
+
+cData$embryo_pos_z = factor(paste0(cData$embryo,"_", cData$pos, "_", cData$z),
+                          levels = mixedsort(unique(as.character(paste0(cData$embryo,"_", cData$pos, "_", cData$z)))))
+sce$embryo_pos_z <- cData$embryo_pos_z
+mRNA_df$embryo_pos_z = factor(paste0(mRNA_df$embryo,"_", mRNA_df$pos, "_", mRNA_df$z),
+                            levels = mixedsort(unique(as.character(paste0(mRNA_df$embryo,"_", mRNA_df$pos, "_", mRNA_df$z)))))
+```
+
+# Save output
+
+```{r}
+sce
+head(colData(sce))
+dim(mRNA_df)
+head(mRNA_df)
+```
+
+```{r}
+saveRDS(sce, file = "../analysis_output/E8.5/E8.5_sce_unfiltered.Rds")
+saveRDS(mRNA_df, file = "../analysis_output/E8.5/E8.5_mRNA_df_unfiltered.Rds")
+```
+
+```{r}
+sessionInfo()
+```

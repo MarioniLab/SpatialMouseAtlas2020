@@ -1,0 +1,416 @@
+---
+title: "E8.5 seqFISH - Spatial neighbourhoods and cell compartments using polygon expansion"
+author: "Shila Ghazanfar"
+date: "11/06/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 10 
+                     fig_height: 8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = TRUE,cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+```
+
+# TODO
+
+# Summary
+
+In this report we generate a network object that relates neighbours of cells,
+by taking the cell segmentation polygon and expanding the vertices by a small 
+expansion factor.
+
+I also contract the cell segmentation 
+
+Note that we're now only working with z-stacks 2 and 5. I place cells from these
+two z-stacks onto the same plane and so also draw edges between them, these can 
+be removed if we want by calling the induced subgraph per z-stack.
+
+# Background code 
+
+Load spatial and segmentation functions
+
+```{r}
+source("spatial_functions.R")
+source("segmentation_functions.R")
+source("celltype_colours.R")
+source("neighbourSegments.R")
+```
+
+# Load data
+
+```{r}
+sce_filt = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+# cData_filt = readRDS("../analysis_output/E8.5/E8.5_cData_filt.Rds")
+cData_filt = as.data.frame(colData(sce_filt))
+```
+
+Set params
+
+```{r}
+expansionFactor = 1.3
+contractionFactor = 0.75
+```
+
+<!-- Subset to z-stacks 2 and 5. -->
+
+<!-- ```{r} -->
+<!-- sce_filt <- sce[,sce$z %in% c(2,5)] -->
+<!-- cData_filt <- cData[sce$z %in% c(2,5),] -->
+<!-- ``` -->
+
+Get polygons.
+
+```{r}
+boundary_polygons = getSegmentationVerticesDF(
+    colData(sce_filt),
+    xname = "segmentation_vertices_x_global_affine",
+    yname = "segmentation_vertices_y_global_affine",
+    othercols = c("uniqueID", "z", "embryo", "pos"))
+
+dim(boundary_polygons)
+head(boundary_polygons)
+```
+
+```{r}
+g = ggplot(boundary_polygons,
+           aes(x = segmentation_vertices_x_global_affine,
+               y = -segmentation_vertices_y_global_affine,
+               group = uniqueID)) + 
+    facet_grid(z ~ embryo) + 
+    theme_classic() +
+    geom_polygon(alpha = 0.5, colour = "black", fill = "lightgrey") + 
+    coord_fixed() + 
+    NULL
+g
+```
+
+# Illustrating polygon expansion using a small example
+
+```{r}
+cellIDs = c("embryo1_Pos0_cell100_z2",
+            "embryo1_Pos0_cell101_z2",
+            "embryo1_Pos0_cell130_z2")
+
+boundary_polygons_example = subset(boundary_polygons, uniqueID %in% cellIDs)
+
+length(unique(boundary_polygons_example$uniqueID))
+
+# expansion
+boundary_polygons_example <- addExpandedVertices(boundary_polygons_example,
+                                                 expansionFactor = expansionFactor)
+
+# contraction
+boundary_polygons_example <- addExpandedVertices(boundary_polygons_example,
+                                                 expansionFactor = contractionFactor,
+                                                 new_xname = "segmentation_vertices_x_global_affine_contracted",
+                                                 new_yname = "segmentation_vertices_y_global_affine_contracted")
+
+df_point = as.data.frame(colData(sce_filt)[cellIDs,])
+df_point$label = paste0("Cell ", 1:nrow(df_point))
+
+g = ggplot(boundary_polygons_example,
+           aes(x = segmentation_vertices_x_global_affine,
+               y = -segmentation_vertices_y_global_affine,
+               group = uniqueID)) + 
+    # facet_grid(z ~ embryo) + 
+    theme_classic() +
+    geom_polygon(alpha = 0.5, colour = "black", fill = "lightgrey") + 
+    coord_fixed() + 
+    NULL
+g
+
+g1 = g + 
+    geom_polygon(aes(x = segmentation_vertices_x_global_affine_expanded,
+                     y = -segmentation_vertices_y_global_affine_expanded,
+                     group = uniqueID),
+                 fill = NA, colour = "blue",
+                 inherit.aes = FALSE) +
+    theme(axis.line = element_blank()) + 
+    theme(axis.text = element_blank()) +
+    theme(axis.ticks = element_blank()) +
+    xlab("") + 
+    ylab("") +
+        geom_point(aes(x = x_global_affine, y = -y_global_affine), data = df_point, col = "darkgrey") +
+    geom_text(aes(x = x_global_affine, y = -y_global_affine, label = label),
+              data = df_point, size = 4, colour = "black") +
+    NULL
+g1
+
+# g1 + 
+    # geom_point(aes(x = x_global_affine, y = -y_global_affine), data = df_point) + 
+
+# g = ggplot(df_point) +
+#     # geom_point(aes(x = x_global_affine, y = -y_global_affine), data = df_point) + 
+#     geom_text(aes(x = x_global_affine, y = -y_global_affine, label = label),
+#               data = df_point, size = 10) +
+#     theme_classic() + 
+#     theme(axis.line = element_blank()) + 
+#     theme(axis.text = element_blank()) +
+#     theme(axis.ticks = element_blank()) +
+#     xlab("") + 
+#     ylab("") +
+#     NULL
+# g
+
+ggsave(g1, file = "../Figures/cellneighbourhood_example.pdf", height = 4, width = 3)
+
+# ggplot()
+
+g1 = g + geom_polygon(aes(x = segmentation_vertices_x_global_affine_contracted,
+                          y = -segmentation_vertices_y_global_affine_contracted,
+                          group = uniqueID),
+                      fill = NA, colour = "red",
+                      inherit.aes = FALSE) +
+    NULL
+g1
+```
+
+Since the blue lines overlap with each other, these two cells will be marked 
+as neighbouring, and an edge will be assigned to them in the output network.
+
+The overlap function is also drawing edges between cells that are along the 
+same z-axis. These can be pruned from the network later by taking the induced
+subgraphs for each z-stack separately.
+
+```{r}
+# boundary_polygons_tmp = subset(boundary_polygons, pos %in% c("Pos0", "Pos50"))
+
+# boundary_polygons_split = split.data.frame(boundary_polygons_tmp,
+#                                            boundary_polygons_tmp$embryo)
+
+# keeps z-stacks together
+# boundary_polygons_split = split.data.frame(boundary_polygons,
+#                                            boundary_polygons$embryo)
+
+# keeps z-stacks separate
+boundary_polygons_split = split.data.frame(boundary_polygons,
+                                           interaction(boundary_polygons$embryo, 
+                                                       boundary_polygons$z))
+
+if (expansionFactor == 1) {
+    boundary_polygons_split = split.data.frame(boundary_polygons,
+                                               boundary_polygons$embryo)
+}
+
+verticesDFList = lapply(boundary_polygons_split, function(df) {
+    split.data.frame(df,df$uniqueID)
+})
+```
+
+# Calculate neighbourhood graph
+
+Perform this calculation for each embryo separately. We can imagine performing
+this calculation over multiple embryos with a large enough expansion factor, 
+since the embryos are roughly aligned using affine transformation, so various 
+tissue regions do overlap with each other.
+
+```{r}
+out_graph_filename = paste0("../analysis_output/E8.5/E8.5_neighbourGraph_",
+                            expansionFactor,
+                            ".Rds")
+
+if (!file.exists(out_graph_filename)) {
+    # function call for a single list element
+    # out = neighbourVertices(verticesDFList[[1]],
+    #                         xname = "segmentation_vertices_x_global_affine",
+    #                         yname = "segmentation_vertices_y_global_affine",
+    #                         expansionFactor = expansionFactor,
+    #                         plot = FALSE,
+    #                         plot2 = TRUE,
+    #                         full = FALSE,
+    #                         verbose = TRUE)
+    
+    if (FALSE) {
+    out_list = lapply(verticesDFList, 
+                      neighbourVertices,
+                      xname = "segmentation_vertices_x_global_affine",
+                      yname = "segmentation_vertices_y_global_affine",
+                      expansionFactor = expansionFactor,
+                      plot = FALSE,
+                      plot2 = FALSE,
+                      full = FALSE,
+                      verbose = TRUE)
+    } else {
+     out_list = parallel::mclapply(verticesDFList, 
+                      neighbourVertices,
+                      xname = "segmentation_vertices_x_global_affine",
+                      yname = "segmentation_vertices_y_global_affine",
+                      expansionFactor = expansionFactor,
+                      plot = FALSE,
+                      plot2 = FALSE,
+                      full = FALSE,
+                      verbose = TRUE, mc.cores = 6)
+    }
+    
+    out_graph = do.call(graph.union, out_list)
+    saveRDS(out_graph, file = out_graph_filename)
+}
+```
+
+# Classify mRNA dots from mRNA_df as inside or outside boundary regions
+
+Load mRNA data. Subset down to z-stacks 2 and 5
+
+```{r}
+mRNA_df_filt = readRDS("../analysis_output/E8.5/E8.5_mRNA_df_filt.Rds")
+# mRNA_df_filt <- subset(mRNA_df, z %in% c(2,5))
+mRNA_df_filt$internal <- rep(FALSE, nrow(mRNA_df_filt))
+```
+
+Get contracted polygons, these are already subsetted to z-stacks 2 and 5.
+
+```{r}
+# contraction
+boundary_polygons_contracted <- addExpandedVertices(boundary_polygons,
+                                                 expansionFactor = contractionFactor,
+                                                 new_xname = "segmentation_vertices_x_global_affine_contracted",
+                                                 new_yname = "segmentation_vertices_y_global_affine_contracted")
+
+verticesDFList_contracted = split.data.frame(boundary_polygons_contracted,
+                                             boundary_polygons_contracted$uniqueID)
+```
+
+Take each polygon and class mRNA dots as to whether they are inside the polygon. 
+This is an easier problem because we can automatically restrict to the mRNAs 
+that are associated with the same cell. A value of TRUE means that the mRNA dot
+is internal to the cell.
+
+```{r}
+mRNA_df_filt_filename = paste0("../analysis_output/E8.5/E8.5_mRNA_df_internal_",
+                               contractionFactor,
+                               ".Rds")
+
+uniqueIDs = mixedsort(unique(as.character(boundary_polygons$uniqueID)))
+
+if (!file.exists(mRNA_df_filt_filename)) {
+    for (uniqueID in uniqueIDs) {
+        
+        print(uniqueID)
+        
+        mRNA_df_filt_ind = which(mRNA_df_filt$uniqueID == uniqueID)
+        
+        inPoly = inpolygon(
+            mRNA_df_filt$x_global_affine[mRNA_df_filt_ind],
+            mRNA_df_filt$y_global_affine[mRNA_df_filt_ind],
+            verticesDFList_contracted[[uniqueID]][,"segmentation_vertices_x_global_affine_contracted"],
+            verticesDFList_contracted[[uniqueID]][,"segmentation_vertices_y_global_affine_contracted"],
+            boundary = TRUE)
+        
+        mRNA_df_filt[mRNA_df_filt_ind, "internal"] <- inPoly
+        
+    }
+    
+    saveRDS(mRNA_df_filt, file = mRNA_df_filt_filename)
+} else {
+    mRNA_df_filt <- readRDS(mRNA_df_filt_filename)
+}
+```
+
+Examine this a little using the example from before
+
+```{r}
+table(mRNA_df_filt$internal)
+head(mRNA_df_filt)
+
+ggplot(subset(mRNA_df_filt, uniqueID %in% boundary_polygons_example$uniqueID),
+       aes(x = x_global_affine, y = -y_global_affine,
+           colour = internal)) +
+    geom_point() + 
+    geom_polygon(data = boundary_polygons_example,
+                 aes(x = segmentation_vertices_x_global_affine,
+                     y = -segmentation_vertices_y_global_affine,
+                     group = uniqueID),
+                 inherit.aes = FALSE,
+                 colour = "black", fill = NA) +
+    geom_polygon(data = boundary_polygons_example,
+                 aes(x = segmentation_vertices_x_global_affine_contracted,
+                     y = -segmentation_vertices_y_global_affine_contracted,
+                     group = uniqueID),
+                 inherit.aes = FALSE,
+                 colour = "blue", fill = NA, linetype = "dotted") +
+    theme_classic() +
+    NULL
+```
+
+Some mRNA dots sit outside of the cell polygon boundary, but have been 
+assigned to the cell - I think there's likely to be some extremely subtle 
+shift in aligning the segmentation and coordinates, also that the segmentation 
+is performed on a 512x512 grid so lacks some resolution.
+
+Generate expression array with three dimensions, genes x cells x internal status
+
+```{r}
+counts_arr = tapply(mRNA_df_filt[,1], list(
+    mRNA_df_filt$geneID,
+    mRNA_df_filt$uniqueID,
+    mRNA_df_filt$internal
+), length)
+counts_arr[is.na(counts_arr)] <- 0
+
+class(counts_arr)
+dim(counts_arr)
+lapply(dimnames(counts_arr),head)
+counts_arr[1:5,1:5,]
+```
+
+Brief comparison, add a jitter to be able to see points
+
+```{r}
+smoothScatter(c(jitter(counts_arr[,,"TRUE"], amount = 0.45)),
+     c(jitter(counts_arr[,,"FALSE"], amount = 0.45)),
+     pch = 16, cex = 0.5,
+     col = scales::alpha("black", 0.2),
+     xlab = "Internal", ylab = "Boundary", gridsize = 15)
+abline(c(0,1))
+
+plot(rowMeans(counts_arr[,,"TRUE"]),
+     rowMeans(counts_arr[,,"FALSE"]), type = "n")
+abline(c(0,1))
+text(rowMeans(counts_arr[,,"TRUE"]),
+     rowMeans(counts_arr[,,"FALSE"]),
+     labels = rownames(counts_arr))
+# names(which(rowMeans(counts_arr[,,"FALSE"]) > rowMeans(counts_arr[,,"TRUE"])))
+```
+
+Majority of genes have fewer counts in the interior than the boundaries, with
+the exception of Meox1. Will be worth graphing MA-plots of the interior and 
+boundary counts per mapped celltype, which I'll do in a separate report.
+
+# Finish
+
+```{r}
+sessionInfo()
+```

@@ -1,3 +1,90 @@
+# # inpolygon function
+# 
+# sce = readRDS("/Users/ghazan01/Dropbox/Backup/SpatialEmbryos/analysis_output/E8.5/E8.5_sce_filt.Rds")
+# 
+# sce
+# 
+# source("/Users/ghazan01/Dropbox/Backup/SpatialEmbryos/scripts/spatial_functions.R")
+# source("/Users/ghazan01/Dropbox/Backup/SpatialEmbryos/scripts/segmentation_functions.R")
+# 
+# polygon_df = getSegmentationVerticesDF(
+#     colData(sce),
+#     xname = "segmentation_vertices_x_global_affine",
+#     yname = "segmentation_vertices_y_global_affine",
+#     othercols = c("uniqueID","z","embryo","pos")
+# )
+# 
+# polygon_df_single = subset(polygon_df, uniqueID == "embryo3_Pos39_cell99_z4")
+# # polygon_df_single = subset(polygon_df, uniqueID == "embryo1_Pos0_cell10_z2")
+# 
+# # outside
+# xval = 2.89
+# yval = -0.5
+# 
+# # inside
+# xval = 2.87
+# yval = -0.48
+# 
+# g = ggplot(polygon_df_single, aes(x = segmentation_vertices_x_global_affine,
+#                                   y = segmentation_vertices_y_global_affine)) + 
+#     geom_polygon(alpha = 0.5) + 
+#     geom_point(x = xval, y = yval)
+# g
+# 
+# plot(polygon_df_single$segmentation_vertices_x_global_affine,
+#      polygon_df_single$segmentation_vertices_y_global_affine, type = "n")
+# text(polygon_df_single$segmentation_vertices_x_global_affine,
+#      polygon_df_single$segmentation_vertices_y_global_affine,
+#      labels = 1:length(polygon_df_single$segmentation_vertices_y_global_affine))
+# 
+# library(pracma)
+# inpolygon(xval, yval, 
+#           polygon_df_single$segmentation_vertices_x_global_affine,
+#           polygon_df_single$segmentation_vertices_y_global_affine,
+#           boundary = TRUE)
+# 
+# poly_length(polygon_df_single$segmentation_vertices_x_global_affine,
+#             polygon_df_single$segmentation_vertices_y_global_affine)
+# 
+# abs(polyarea(polygon_df_single$segmentation_vertices_x_global_affine,
+#              polygon_df_single$segmentation_vertices_y_global_affine))
+# 
+# # need to close the polygon for this to work
+# center = poly_center(c(polygon_df_single$segmentation_vertices_x_global_affine,
+#                        polygon_df_single$segmentation_vertices_x_global_affine[1]),
+#                      c(polygon_df_single$segmentation_vertices_y_global_affine,
+#                        polygon_df_single$segmentation_vertices_y_global_affine[1])) 
+# center
+# 
+# # given a search polygon, find overlaps
+# # search_x = c(2.87,2.87, 2.86, 2.86)
+# # search_y = c(-0.55, -0.48, -0.48, -0.55)
+# 
+# # search_x = c(2.87,2.87, 2.86, 2.86)
+# # search_y = c(-0.55, -0.525, -0.525, -0.55)
+# 
+# search_x = c(2.87,2.87, 2.86, 2.86)
+# search_y = c(-0.475, -0.478, -0.478, -0.475)
+# 
+# search_df = data.frame(
+#     search_x = search_x,
+#     search_y = search_y
+# )
+# 
+# g + geom_polygon(aes(x = search_x, y = search_y), data = search_df, alpha = 0.5, fill = "blue")
+# 
+# # check if inside polygon, if yes then overlaps
+# inpolygon(search_x, search_y, 
+#           polygon_df_single$segmentation_vertices_x_global_affine,
+#           polygon_df_single$segmentation_vertices_y_global_affine,
+#           boundary = TRUE)
+# 
+# # if any crossings then yes overlaps
+# poly_crossings(rbind(polygon_df_single$segmentation_vertices_x_global_affine,
+#                      polygon_df_single$segmentation_vertices_y_global_affine),
+#                rbind(search_df$search_x,
+#                      search_df$search_y))
+
 # given the center of a polygon, expand or contract the polygon vertices 
 # by a factor
 expandPoint = function(x0,y0,x,y,c) {
@@ -40,6 +127,26 @@ expandPoint = function(x0,y0,x,y,c) {
 expandPointV = Vectorize(expandPoint)
 
 closeVertices = function(x) {c(x,x[1])}
+
+# pt_all = t(expandPointV(center[1],center[2],
+#                         polygon_df_single$segmentation_vertices_x_global_affine,
+#                         polygon_df_single$segmentation_vertices_y_global_affine,
+#                         1))
+
+# pt_all = NULL
+# for (i in 1:length(polygon_df_single$segmentation_vertices_x_global_affine)) {
+#     pt = expandPoint(center[1],center[2],
+#                      polygon_df_single$segmentation_vertices_x_global_affine[i],
+#                      polygon_df_single$segmentation_vertices_y_global_affine[i],
+#                      2)
+#     pt_all <- rbind(pt_all, pt)
+# }
+
+# g + geom_point(colour = "red") + 
+#     geom_point(x = pt_all[,1], y = pt_all[,2],colour = "blue") +
+#     geom_polygon(x = pt_all[,1], y = pt_all[,2],colour = "blue", fill = NA) +
+#     xlim(c(2.8, 2.95)) + 
+#     ylim(c(-0.55, -0.40))
 
 
 
@@ -84,6 +191,22 @@ addExpandedVertices = function(verticesDF,
     return(verticesDF_long)
 }
 
+
+
+
+
+
+
+
+
+# given a (named) list of vertex dataframes, output a graph of overlapping
+# polygons according to an expansion factor
+
+# polygon_df_sub = subset(polygon_df, embryo == "embryo1" & pos %in% c("Pos0", "Pos1") & z == 3)
+# 
+# verticesDFList = split.data.frame(polygon_df_sub,
+#                                   polygon_df_sub$uniqueID)
+
 neighbourVertices = function(verticesDFList,
                              xname = "segmentation_vertices_x_global_affine",
                              yname = "segmentation_vertices_y_global_affine",
@@ -92,15 +215,6 @@ neighbourVertices = function(verticesDFList,
                              plot2 = TRUE,
                              full = FALSE,
                              verbose = FALSE) {
-
-    # given a (named) list of vertex dataframes, output a graph of overlapping
-# polygons according to an expansion factor
-
-# polygon_df_sub = subset(polygon_df, embryo == "embryo1" & pos %in% c("Pos0", "Pos1") & z == 3)
-# 
-# verticesDFList = split.data.frame(polygon_df_sub,
-#                                   polygon_df_sub$uniqueID)
-
     
     # full means check overlaps of polygons not just vertices,
     # this might be (much?) slower
@@ -277,9 +391,10 @@ neighbourVertices = function(verticesDFList,
     }
     
     return(neighbourSegmentsGraph)
+}
 
-    # usage 
-    # out = neighbourVertices(verticesDFList,
+
+# out = neighbourVertices(verticesDFList,
 #                         xname = "segmentation_vertices_x_global_affine",
 #                         yname = "segmentation_vertices_y_global_affine",
 #                         expansionFactor = 1.1,
@@ -289,10 +404,6 @@ neighbourVertices = function(verticesDFList,
 
 # given a set of 2D coordinates, calculate the network distance
 # trim extra long edges using 1st quartile
-
-}
-
-
 
 get_delaunay = function(coords,
                         euc_filter = "quantile",
@@ -319,8 +430,10 @@ get_delaunay = function(coords,
     }
     
     # euc_dist_max
-        
-    win_val = do.call(owin, unlist(apply(coords,2,function(x) list(range(x))), recursive = FALSE))
+    
+    win_val = owin(xrange = range(coords[,1]), yrange = range(coords[,2]))
+    
+    # win_val = do.call(owin, unlist(apply(coords,2,function(x) list(range(x))), recursive = FALSE))
     
     # ppp only in 2D
     Y = ppp(coords[,1], coords[,2], window = win_val)
@@ -337,6 +450,7 @@ get_delaunay = function(coords,
     # prune the edgelist based on euclidean distance
     dist_edgelist = diag(euc_dist[out_edgelist[,1],out_edgelist[,2]])
     
+    # table(dist_edgelist < euc_dist_max)
     
     if (euc_filter != "none") {
         out_edgelist <- out_edgelist[dist_edgelist < euc_dist_max,]
@@ -370,6 +484,8 @@ get_delaunay = function(coords,
         
     }
     
+    # out_weight = 1 - out_dist/max(c(out_dist))
+    
     return(list(dist = out_dist, graph = out_graph, delaunay = full_edgelist))
     
 }
@@ -396,13 +512,106 @@ makeTriangular = function(mat) {
     return(matSym)
 }
 
+
+splitChunk = function(N, N_chunk) {
+    # N is a number
+    # N_chunk is the number to split into
+    # output is a list containing start and end indices
+    
+    # add an error if either is not positive integer
+    
+    if (N <= N_chunk) {
+        return(list(c(1,N)))
+    }
+    
+    # e.g.
+    # N = 300
+    # N_chunk = 100
+    
+    out = list()
+    out[[1]] <- c(1)
+    
+    while (rev(unlist(out))[1] < N) {
+        
+        n = length(out)
+        out[[n]][2] <- out[[n]][1] + (N_chunk - 1)
+        if (out[[n]][2] >= N) {
+            out[[n]][2] <- N
+        } else {
+            out[[n+1]] <- out[[n]][2] + 1
+        }
+        # print(out)
+        
+    }
+    
+    return(out)
+}
+
 getRandomConnectivity = function(sce, 
                                  neighbours,
                                  group,
                                  option = "observed", 
                                  x_name = "x_global_affine",
                                  y_name = "y_global_affine",
+                                 splitgroups = c("embryo", "z"),
+                                 chunksize = 10000) {
+    ######## new function with more functionality
+    # option either observed or random
+    # sce singlecellexperiment
+    # neighbours a two column matrix with cell names
+    # here group is a matrix of prior probabilities of cell types
+    
+    if (length(group) == 1 & class(group)[1] == "character") {
+        # convert to matrix with 1s and 0s
+        
+        fac = colData(sce)[,group]
+        levels = as.character(sort(unique(fac)))
+        
+        group = do.call(cbind,sapply(levels, function(ctype){
+            1*(fac == ctype)
+        },simplify = FALSE))
+        rownames(group) <- colnames(sce)
+    }
+    
+    group <- group[colnames(sce),]
+    
+    if (option != "observed") {
+        # randomly sample but within the splitgroups
+        group_split = split.data.frame(group,
+                                       interaction(as.data.frame(colData(sce)[,splitgroups])))
+        group_split_randomised = lapply(group_split, function(subgroup) {
+            subgroup_randomised <- subgroup[sample(rownames(subgroup)),]
+            rownames(subgroup_randomised) <- rownames(subgroup)
+            return(subgroup_randomised)
+        })
+        group_randomised = do.call(rbind, group_split_randomised)[rownames(group),]
+        group <- group_randomised
+    }
+    
+    
+    nb_arr = 0
+    chunks = splitChunk(nrow(neighbours), chunksize)
+    
+    for (nb in 1:length(chunks)) {
+        # print(nb)
+        nb_arr_i = t(group[neighbours[chunks[[nb]][1]:chunks[[nb]][2],1],]) %*% group[neighbours[chunks[[nb]][1]:chunks[[nb]][2],2],]
+        nb_arr <- nb_arr + nb_arr_i
+    }
+    
+    neighbourSimilaritySym = makeTriangular(nb_arr)
+    
+    return(neighbourSimilaritySym)
+}
+
+
+getRandomConnectivity_dep = function(sce, 
+                                 neighbours,
+                                 group,
+                                 option = "observed", 
+                                 x_name = "x_global_affine",
+                                 y_name = "y_global_affine",
                                  splitgroups = c("embryo", "z")) {
+    ##### deprecated function!!!
     # option either observed or random
     # sce singlecellexperiment
     # neighbours a two column matrix with cell names
@@ -448,6 +657,7 @@ cellCellContact = function(sce,
                            cellID = "uniqueID",
                            ...) {
     require(igraph)
+    require(abind)
     
     graph_sub = induced_subgraph(graph,
                                  which(V(graph)$name %in% as.character(colData(sce)[,cellID])))

@@ -1,0 +1,479 @@
+---
+title: "E8.5 seqFISH - Mesoderm analysis using Han et al Data"
+author: "Shila Ghazanfar"
+date: "23/10/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 16
+                     fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = FALSE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+library(RColorBrewer)
+```
+
+```{r}
+library(SpatialUtils)
+```
+
+```{r}
+na_colour = "white"
+polygon_size = 0.1
+polygon_colour = "black"
+```
+
+# Load Han data
+
+Load Han et al processed data file
+
+```{r}
+processedFile_Han = "../Data/Han/processed/sce_han_all.Rds"
+sce_han_raw = readRDS(processedFile_Han)
+sce_han_raw
+```
+
+# Load Nowotschin data
+
+```{r}
+processedFile_Nowotschin = "../Data/Nowotschin/processed/Nowotschin_sce_sub.Rds"
+sce_now_raw = readRDS(processedFile_Nowotschin)
+sce_now_raw
+```
+
+# Load spatial data
+
+```{r}
+sce = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+sce <- reNormalise(sce)
+```
+
+# Add cell type and clustering information
+
+```{r}
+mapping_dt = readRDS("../analysis_output/E8.5/celltype_annotation_refined.Rds")
+colData(sce) <- cbind(colData(sce), mapping_dt[colnames(sce), setdiff(colnames(mapping_dt),colnames(colData(sce)))])
+```
+
+```{r}
+meso_celltypes = c("Pharyngeal mesoderm",
+                   "Splanchnic mesoderm",
+                   "Paraxial mesoderm",
+                   "Intermediate mesoderm",
+                   "Mesenchyme",
+                   "NMP",
+                   "ExE mesoderm",
+                   "Endothelium")
+```
+
+Subset to relevant cell types, using Tim's suggestion:
+relevant mesodermal subtypes for Han data:
+pharyngeal mesoderm / paraxialmesoderm /  intermediate mesoderm / Mesenchyme
+Would also include: NMP / extraembryonic mesoderm / endothelium
+
+# Subset and batch correction of Han data
+
+Subset down to the E8.5, find out how many cell types they actually include, 
+also figure out if we want to keep the other E8.75 samples. Batch correct them
+using the sample information we have (need to pull from the cell names).
+
+```{r}
+head(colData(sce_han_raw))
+table(sce_han_raw$stage)
+table(sce_han_raw$cluster_annotated, sce_han_raw$stage, useNA = "always")
+```
+
+Restrict down to the E8.5 samples.
+
+```{r}
+han_samplesToKeep = as.character(unique(colData(sce_han_raw)[colData(sce_han_raw)$stage == "E8.5","cell"]))
+head(han_samplesToKeep)
+
+sce_han = sce_han_raw[,han_samplesToKeep]
+sce_han
+```
+
+Restrict to genes that are in seqFISH data, fix gene names as needed.
+[Cavin3](http://www.informatics.jax.org/marker/MGI:1923422)
+[Nkx1-2](http://www.informatics.jax.org/marker/MGI:104806)
+[Nkx2-3](http://www.informatics.jax.org/marker/MGI:97348)
+
+```{r}
+table(rownames(sce) %in% rownames(sce_han))
+setdiff(rownames(sce), rownames(sce_han))
+
+rownames(sce_han)[rownames(sce_han) == "Prkcdbp"] <- "Cavin3"
+
+table(rownames(sce) %in% rownames(sce_han))
+setdiff(rownames(sce), rownames(sce_han))
+```
+
+# Subset and batch correction of Nowotschin data
+
+```{r}
+head(colData(sce_now_raw))
+sce_now_raw$Sample <- gsub("_.*", "", colnames(sce_now_raw))
+table(sce_now_raw$Sample)
+table(sce_now_raw$Sample, sce_now_raw$AP_pseudo, useNA = "always")
+
+# Restrict down to the samples that contribute to the pseudospace.
+now_samplesToKeep = unique(colData(sce_now_raw)[!is.na(sce_now_raw$AP_pseudo),"Sample"])
+now_samplesToKeep
+sce_now = sce_now_raw[, sce_now_raw$Sample %in% now_samplesToKeep]
+sce_now
+# Restrict to genes that are in seqFISH data, fix gene names as needed. Cavin3 Nkx1-2 Nkx2-3
+table(rownames(sce) %in% rownames(sce_now))
+setdiff(rownames(sce), rownames(sce_now))
+rownames(sce_now)[rownames(sce_now) == "Prkcdbp"] <- "Cavin3"
+rownames(sce_now)[rownames(sce_now) == "Nkx1.2"] <- "Nkx1-2"
+rownames(sce_now)[rownames(sce_now) == "Nkx2.3"] <- "Nkx2-3"
+table(rownames(sce) %in% rownames(sce_now))
+setdiff(rownames(sce), rownames(sce_now))
+```
+
+# Joint mapping of Han and Nowotschin and spatial data
+
+To avoid sex specific effects, remove Xist from the PCA calculation step.
+
+```{r}
+sce_han_sub <- sce_han[rownames(sce_han) %in% rownames(sce),][rownames(sce),]
+sce_han_sub <- logNormCounts(sce_han_sub)
+
+assay(sce_han_sub, "cosineNorm") <- cosineNorm(logcounts(sce_han_sub))
+```
+
+# Perform HVG gene selection of Han data
+
+Only for those with labels
+
+```{r}
+sce_han <- logNormCounts(sce_han)
+stats = modelGeneVar(sce_han[,!is.na(sce_han$cluster_annotated)], block = sce_han[,!is.na(sce_han$cluster_annotated)]$Sample)
+hvgs_all = getTopHVGs(stats, fdr.threshold = 0.05) # more stringent
+hvgs = intersect(hvgs_all, rownames(sce))
+length(hvgs)
+```
+
+# Same for Nowotschin data
+
+To avoid sex specific effects, remove Xist from the PCA calculation step.
+
+```{r}
+sce_now_sub <- sce_now[rownames(sce_now) %in% rownames(sce),][rownames(sce),]
+sce_now_sub <- logNormCounts(sce_now_sub)
+
+assay(sce_now_sub, "cosineNorm") <- cosineNorm(logcounts(sce_now_sub))
+```
+
+# Perform HVG gene selection of Han data
+
+Only for those with labels
+
+```{r}
+sce_now <- logNormCounts(sce_now)
+stats_now = modelGeneVar(sce_now[,!is.na(sce_now$AP_pseudo)], block = sce_now[,!is.na(sce_now$AP_pseudo)]$Sample)
+hvgs_all_now = getTopHVGs(stats_now, fdr.threshold = 0.05) # more stringent
+hvgs_now = intersect(hvgs_all_now, rownames(sce))
+length(hvgs_now)
+```
+
+# concatenate the han and nowotschin data
+
+```{r}
+sce_han_now = SingleCellExperiment(
+  assays = list(logcounts = cbind(assay(sce_han_sub, "logcounts"),
+                                  assay(sce_now_sub, "logcounts")))
+)
+sce_han_now$stage = c(sce_han_sub$stage, sce_now_sub$Sample) 
+table(sce_han_now$stage)
+```
+
+# get common hvgs
+
+```{r}
+length(hvgs)
+length(hvgs_now)
+hvgs
+hvgs_now
+hvgs_common = setdiff(union(hvgs, hvgs_now), "Xist")
+length(hvgs_common)
+hvgs_common
+```
+
+# Get joint PC space for Han and spatial data
+
+```{r}
+atlas = sce_han_now
+spatial = sce
+assayNameAtlas = "logcounts"
+assayNameSpatial = "logcounts"
+inc_z = TRUE
+atlas_batch = "stage"
+spatial_batch = c("embryo", "pos","z")
+irlba = FALSE # if this is FALSE, then multibatchPCA
+
+all_assay = cbind(assay(spatial, assayNameSpatial)[hvgs_common,],
+                  # assay(atlas, assayNameAtlas)[rownames(spatial),])
+                  assay(atlas, assayNameAtlas)[hvgs_common,])
+
+if (!inc_z) {
+  spatial_batch <- setdiff(spatial_batch, "z")
+}
+
+spatial_batchFactor = do.call(interaction, 
+                              sapply(spatial_batch, function(x) 
+                                colData(spatial)[,x], simplify = FALSE))
+
+atlas_batchFactor = do.call(interaction, 
+                            sapply(atlas_batch, function(x) 
+                              colData(atlas)[,x], simplify = FALSE))
+
+# make sure the levels of the atlas batchFactor are first
+batchFactor = factor(c(as.character(spatial_batchFactor),
+                       as.character(atlas_batchFactor)),
+                     levels = c(sort(unique(as.character(atlas_batchFactor))),
+                                sort(unique(as.character(spatial_batchFactor)))))
+print(table(batchFactor))
+levels(batchFactor)
+
+# set the merge order
+# we just have one group for the Han et al data
+
+# MANUALLY CODED
+# nowotschin clusters then han then so on..
+merge.ordering = unlist(list(list(list(5,3,4,2,1)), as.list(6:length(levels(batchFactor)))), recursive = FALSE)
+
+if (!file.exists("../analysis_output/E8.5/han_now_joint_mnn_pca.Rds")) {
+  
+  if (!irlba) {
+    out = fastMNN(all_assay,
+                  batch = batchFactor,
+                  subset.row = !(rownames(all_assay) %in% "Xist"),
+                  d = 50,
+                  merge.order = merge.ordering)
+    
+    print(head(out@metadata$merge.info))
+    
+    joint_mnn_pca_han <- reducedDim(out, "corrected")
+  } else {
+    
+    pca_all <- irlba::prcomp_irlba(t(all_assay), n = 50)$x
+    rownames(pca_all) <- colnames(all_assay)
+    
+    out = reducedMNN(pca_all,
+                     batch = batchFactor,
+                     # subset.row = !(rownames(all_assay) %in% "Xist"),
+                     # d = 50,
+                     merge.order = merge.ordering)
+    
+    joint_mnn_pca_han <- out$corrected
+    
+  }
+  
+  saveRDS(joint_mnn_pca_han, file = "../analysis_output/E8.5/han_now_joint_mnn_pca.Rds")
+} else {
+  joint_mnn_pca_han = readRDS("../analysis_output/E8.5/han_now_joint_mnn_pca.Rds")
+}
+
+if (!file.exists("../analysis_output/E8.5/han_now_joint_mnn_umap.Rds")) {
+  joint_mnn_umap_han = calculateUMAP(joint_mnn_pca_han, transposed = TRUE)
+  rownames(joint_mnn_umap_han) <- rownames(joint_mnn_pca_han)
+  saveRDS(joint_mnn_umap_han, file = "../analysis_output/E8.5/han_now_joint_mnn_umap.Rds")
+} else {
+  joint_mnn_umap_han = readRDS("../analysis_output/E8.5/han_now_joint_mnn_umap.Rds")
+}
+
+plot(joint_mnn_umap_han)
+
+
+ds = substring(rownames(joint_mnn_umap_han),1,1)
+ds[ds == "e"] <- "seqFISH"
+ds[ds == "L"] <- "Nowotschin"
+ds[ds %in% c("A", "C", "G","T")] <- "Han"
+table(ds)
+
+ind = sample(nrow(joint_mnn_umap_han))
+
+plot(joint_mnn_umap_han[ind,], col = factor(ds)[ind], pch = 16, cex = 0.2)
+legend("topright", col = 1:3, legend = levels(factor(ds)), pch = 16)
+
+plot(joint_mnn_umap_han, col = factor(substring(rownames(joint_mnn_umap_han),1,1) %in% c("e", "L")), pch = 16, cex = 0.5)
+
+ap = as.character(sce_han_sub$cluster_annotated)
+names(ap) <- colnames(sce_han_sub)
+
+table(sce_han_sub$celltype_broad, useNA = "always")
+table(as.character(sce_han_sub$cluster_annotated), useNA = "always")
+
+bc = as.character(sce_han_sub$celltype_broad)
+names(bc) <- colnames(sce_han_sub)
+
+ap_p = as.character(sce_now_sub$AP_pseudo)
+names(ap_p) <- colnames(sce_now_sub)
+
+plot(joint_mnn_umap_han, col = factor(ap[rownames(joint_mnn_umap_han)]),
+     pch = 16, cex = 0.5)
+
+plot(joint_mnn_umap_han, col = factor(bc[rownames(joint_mnn_umap_han)] == "Spl_Meso"),
+     pch = 16, cex = 0.5)
+
+plot(joint_mnn_umap_han, col = factor(ap_p[rownames(joint_mnn_umap_han)] == "Lung 1"),
+     pch = 16, cex = 0.5)
+
+joint_mnn_umap_han_spatial = joint_mnn_umap_han[c(colnames(sce), colnames(sce_han_sub)),]
+```
+
+
+# calculate nearest neighbour cells in four different ways
+
+- seqFISH onto Han (for mesodermal subtypes)
+- seqFISH onto Nowotschin (for endoderm subtypes consistency check)
+- Han onto Nowotschin (for mesodermal subtypes)
+- Nowotschin onto Han (for endoderm subtypes)
+
+```{r}
+# naming is query then reference
+k.mapped_seqFISH_Han = get_k.mapped(joint_mnn_pca_han, colnames(sce), colnames(sce_han_sub))
+k.mapped_seqFISH_Nowotschin = get_k.mapped(joint_mnn_pca_han, colnames(sce), colnames(sce_now_sub))
+k.mapped_Han_Nowotschin = get_k.mapped(joint_mnn_pca_han, colnames(sce_han_sub), colnames(sce_now_sub))
+k.mapped_Nowotschin_Han = get_k.mapped(joint_mnn_pca_han, colnames(sce_now_sub), colnames(sce_han_sub))
+k.mapped_Nowotschin_seqFISH = get_k.mapped(joint_mnn_pca_han, colnames(sce_now_sub), colnames(sce))
+k.mapped_Han_seqFISH = get_k.mapped(joint_mnn_pca_han, colnames(sce_han_sub), colnames(sce))
+
+mapped_objs = intersect(paste0("k.mapped_", apply(expand.grid(c("Han", "Nowotschin", "seqFISH"),c("Han", "Nowotschin", "seqFISH")),1,paste0, collapse = "_")), ls())
+mapped_objs
+save(list = mapped_objs, file = "../analysis_output/E8.5/han_now_k.mapped_all.RData")
+
+seqFISH_cluster_annotated = get_MVS_vals(vectorMatch(sce_han_sub$cluster_annotated, k.mapped_seqFISH_Han, colnames(sce_han_sub)))
+
+seqFISH_AP_pseudo = get_MVS_vals(vectorMatch(sce_now_sub$AP_pseudo, k.mapped_seqFISH_Nowotschin, colnames(sce_now_sub)))
+
+Han_AP_pseudo = get_MVS_vals(vectorMatch(sce_now_sub$AP_pseudo, k.mapped_Han_Nowotschin, colnames(sce_now_sub)))
+
+Nowotschin_cluster_annotated = get_MVS_vals(vectorMatch(sce_han_sub$cluster_annotated, k.mapped_Nowotschin_Han, colnames(sce_han_sub)))
+
+Nowotschin_celltype_mapped_refined = get_MVS_vals(vectorMatch(sce$celltype_mapped_refined, k.mapped_Nowotschin_seqFISH, colnames(sce)))
+
+Han_celltype_mapped_refined = get_MVS_vals(vectorMatch(sce$celltype_mapped_refined, k.mapped_Han_seqFISH, colnames(sce)))
+
+seqFISH_celltype_broad = get_MVS_vals(vectorMatch(sce_han_sub$celltype_broad, k.mapped_seqFISH_Han, colnames(sce_han_sub)))
+
+Nowotschin_celltype_broad = get_MVS_vals(vectorMatch(sce_han_sub$celltype_broad, k.mapped_Nowotschin_Han, colnames(sce_han_sub)))
+
+seqFISH_CellType = get_MVS_vals(vectorMatch(sce_now_sub$CellType, k.mapped_seqFISH_Nowotschin, colnames(sce_now_sub)))
+
+Han_CellType = get_MVS_vals(vectorMatch(sce_now_sub$CellType, k.mapped_Han_Nowotschin, colnames(sce_now_sub)))
+
+
+# seqfish, han, nowotschin
+n_seqFISH = ncol(sce)
+n_han = ncol(sce_han_sub)
+n_now = ncol(sce_now_sub)
+joint_df = data.frame(
+  dataType = c(rep("seqFISH", n_seqFISH), rep("Han", n_han), rep("Nowotschin", n_now)),
+  uniqueID = c(colnames(sce), colnames(sce_han_sub), colnames(sce_now_sub)),
+  UMAP1 = c(joint_mnn_umap_han[colnames(sce),1],joint_mnn_umap_han[colnames(sce_han_sub),1],joint_mnn_umap_han[colnames(sce_now_sub),1]),
+  UMAP2 = c(joint_mnn_umap_han[colnames(sce),2],joint_mnn_umap_han[colnames(sce_han_sub),2],joint_mnn_umap_han[colnames(sce_now_sub),2]),
+  celltype_mapped_refined = c(as.character(sce$celltype_mapped_refined), rep(NA, n_han), rep(NA, n_now)),
+  celltype_mapped_refined_all = c(as.character(sce$celltype_mapped_refined),
+                                  Han_celltype_mapped_refined[,"celltype_mapped"],
+                                  Nowotschin_celltype_mapped_refined[,"celltype_mapped"]),
+  AP_pseudo = c(rep(NA, n_seqFISH), rep(NA, n_han), sce_now_sub$AP_pseudo),
+  AP_pseudo_all = c(seqFISH_AP_pseudo[,"celltype_mapped"],
+                    Han_AP_pseudo[,"celltype_mapped"],
+                    sce_now_sub$AP_pseudo),
+  cluster_annotated = c(rep(NA, n_seqFISH), as.character(sce_han_sub$cluster_annotated), rep(NA, n_now)),
+  cluster_annotated_all = c(seqFISH_cluster_annotated[,"celltype_mapped"],
+                            as.character(sce_han_sub$cluster_annotated),
+                            Nowotschin_cluster_annotated[,"celltype_mapped"]),
+  celltype_broad = c(rep(NA, n_seqFISH), as.character(sce_han_sub$celltype_broad), rep(NA, n_now)),
+  celltype_broad_all = c(seqFISH_celltype_broad[,"celltype_mapped"],
+                         as.character(sce_han_sub$celltype_broad),
+                         Nowotschin_celltype_broad[,"celltype_mapped"]),
+  CellType =  c(rep(NA, n_seqFISH), rep(NA, n_han), as.character(sce_now_sub$CellType)),
+  CellType_all = c(seqFISH_CellType[,"celltype_mapped"],
+                    Han_CellType[,"celltype_mapped"],
+                    as.character(sce_now_sub$CellType))
+)
+```
+
+
+```{r}
+colnames(joint_df)
+
+g = ggplot(joint_df[sample(nrow(joint_df)),],aes(x = UMAP1, y = UMAP2)) + 
+  theme_classic() +
+  coord_fixed() +
+  guides(colour = guide_legend(override.aes = list(alpha = 1, size = 5))) +
+  NULL
+
+g + geom_point(aes(colour = dataType), alpha = 0.3)
+
+g + geom_point(aes(colour = celltype_mapped_refined), alpha = 0.3) + 
+  scale_colour_manual(values = celltype_colours, na.value = "lightgrey")
+
+g + geom_point(aes(colour = celltype_mapped_refined_all), alpha = 0.3) + 
+  scale_colour_manual(values = celltype_colours, na.value = "lightgrey")
+
+g + geom_point(aes(colour = AP_pseudo), alpha = 0.3) + 
+  scale_colour_manual(values = AP_pseudo_colours, na.value = "lightgrey")
+
+g + geom_point(aes(colour = AP_pseudo_all), alpha = 0.3) + 
+  scale_colour_manual(values = AP_pseudo_colours, na.value = "lightgrey")
+
+g + geom_point(aes(colour = cluster_annotated), alpha = 0.3)
+
+g + geom_point(aes(colour = cluster_annotated_all), alpha = 0.3)
+
+g + geom_point(aes(colour = celltype_broad), alpha = 0.3)
+
+g + geom_point(aes(colour = celltype_broad_all), alpha = 0.3)
+
+g + geom_point(aes(colour = CellType), alpha = 0.3)
+
+g + geom_point(aes(colour = CellType_all), alpha = 0.3)
+```
+
+```{r}
+saveRDS(joint_df, file = "../analysis_output/E8.5/E8.5_Han_Nowotschin_joint_mnn_df.Rds")
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

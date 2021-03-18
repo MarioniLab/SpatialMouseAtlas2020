@@ -1,0 +1,219 @@
+---
+title: "E8.5 seqFISH - process Han et al data into SingleCellExperiment object"
+author: "Shila Ghazanfar"
+date: "07/08/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 16
+                     fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = FALSE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+library(RColorBrewer)
+```
+
+```{r}
+library(SpatialUtils)
+```
+
+```{r}
+na_colour = "white"
+polygon_size = 0.1
+polygon_colour = "black"
+```
+
+# TODO
+
+Note from Tim:
+
+relevant mesodermal subtypes for Han data:
+pharyngeal mesoderm / paraxialmesoderm /  intermediate mesoderm / Mesenchyme
+Would also include: NMP / extraembryonic mesoderm / endothelium
+
+# Summary
+
+Here we want to generate cell labels for the spatial data - especially the 
+splanchnic mesoderm cells - that are informed by the Han et al dataset. This
+dataset is interesting because they look deeply at the splanchnic mesoderm and 
+estimate an anterior to posterior axis of cells. Splanchnic means related to 
+the internal organs, as opposed to other mesodermal regions.
+
+We would like to see if we observe a similar distribution of cells along
+the A-P axis, and if there are any other interesting observations to be made.
+
+The relevant graph is sFig S2 from the preprint
+![Figure](../Data/Han/raw/sFig_S2_E8.5.png)
+
+The data was kindly shared with us by Praneet via Dropbox link, which contained
+four files, two gene expression matrices, and two metadata tables. First we 
+unify these datasets and extract the relevant cell annotations.
+
+The data contains a mix of cells from E8.5, E9.0 and E9.5, we want to focus on 
+just the E8.5 cells.
+
+# Clean the metadata
+
+First we want to see if there is overlap of the cells in the two gene expression
+matrices. 
+
+```{r}
+cat(readLines("../Data/Han/raw/readme.txt"))
+```
+
+
+```{r}
+processedFile = "../Data/Han/processed/sce_han_all.Rds"
+```
+
+```{r}
+if (!file.exists(processedFile)) {
+meta_all_raw = read.delim("../Data/Han/raw/scRNA-Seq_Counts_and_MetaFiles/MetaFile_AllCells_E8.5_E9.0_E9.5_Final.txt", header = TRUE, row.names = 1)
+
+meta_DESM_raw = read.delim("../Data/Han/raw/scRNA-Seq_Counts_and_MetaFiles/MetaFile_DE_and_SM_Cells_E8.5_E9.0_E9.5.txt", header = TRUE, row.names = 1)
+
+head(meta_all_raw)
+dim(meta_all_raw)
+
+head(meta_DESM_raw)
+dim(meta_DESM_raw)
+
+table(rownames(meta_all_raw) %in% rownames(meta_DESM_raw))
+table(rownames(meta_DESM_raw) %in% rownames(meta_all_raw))
+}
+```
+
+It looks like the "AllCells" data contains the DESM cells, but does not have
+as specific cell annotation as the other. So we combine these into a single 
+annotation data frame.
+
+```{r}
+if (!file.exists(processedFile)) {
+  table(meta_all_raw[rownames(meta_DESM_raw), "Stages"],
+      meta_DESM_raw[rownames(meta_DESM_raw), "Stages"], useNA = "always")
+identical(as.character(meta_all_raw[rownames(meta_DESM_raw), "Stages"]),
+          as.character(meta_DESM_raw[rownames(meta_DESM_raw), "Stages"]))
+
+table(meta_all_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+      meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"], useNA = "always")
+
+table(meta_all_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+      meta_DESM_raw[rownames(meta_DESM_raw), "Type"], useNA = "always")
+
+table(meta_all_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+      meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"], useNA = "always")
+
+table(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+      meta_DESM_raw[rownames(meta_DESM_raw), "Type"], useNA = "always")
+
+table(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+      meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"], useNA = "always")
+
+sum(diag(table(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+               meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"], useNA = "always")))
+
+head(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"])
+head(meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"])
+
+identical(unlist(lapply(strsplit(as.character(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"]), ":"), "[", 1)),
+          as.character(meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"]))
+}
+```
+
+For the DESM annotation, "LineageAnnotations" is the same as "Clusters" just 
+with extra descriptive annotation, so we know that they contain the same 
+information.
+
+Put all annotation into a single dataframe, for all cells
+
+```{r}
+if (!file.exists(processedFile)) {
+meta_all = meta_all_raw
+colnames(meta_all) <- c("cell", "stage", "celltype_broad")
+
+meta_all$type <- NULL
+meta_all[rownames(meta_DESM_raw),"type"] <- factor(as.character(meta_DESM_raw$Type))
+
+meta_all$cluster <- NULL
+meta_all[rownames(meta_DESM_raw),"cluster"] <- factor(as.character(meta_DESM_raw$Clusters))
+
+meta_all$cluster_annotated <- NULL
+meta_all[rownames(meta_DESM_raw),"cluster_annotated"] <- factor(as.character(meta_DESM_raw$LineageAnnotations))
+
+dim(meta_all)
+head(meta_all)
+}
+```
+
+# Pull out the gene expression counts for all cells
+
+This is huge and so I converted into a sparse matrix on EBI server, 
+script located in /nfs/research1/marioni/shila/SpatialEmbryos/Data/Han/raw/scRNA-Seq_Counts_and_MetaFiles
+
+```{r}
+if (!file.exists(processedFile)) {
+  counts_all <- readRDS("../Data/Han/raw/scRNA-Seq_Counts_and_MetaFiles/Counts_Matrix_AllCells_E8.5_E9.0_E9.5.Rds")
+dim(counts_all)
+counts_all[1:5,1:5]
+
+identical(colnames(counts_all), rownames(meta_all))
+}
+```
+
+Generate SingleCellExperiment object for all Han cells and save
+
+```{r}
+if (!file.exists(processedFile)) {
+  sce_han_raw = SingleCellExperiment(
+  assays = list(counts = counts_all),
+  colData = DataFrame(meta_all))
+
+sce_han_raw
+saveRDS(sce_han_raw, file = "../Data/Han/processed/sce_han_all.Rds")
+}
+```
+
+```{r}
+sce_han_raw = readRDS(processedFile)
+sce_han_raw
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

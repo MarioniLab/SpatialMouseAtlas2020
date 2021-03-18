@@ -47,3 +47,8 @@ E8.5_Mesenchyme.Rmd
 E8.5_Nowotschin.Rmd
 - integration of data with gut tube cells from Nowotschin et al (2019).
 
+E8.5_Han.Rmd
+- Convert expression data from Han et al (2020) into SingleCellExperiment
+
+E8.5_Han_Nowotschin.Rmd
+- jointly map data from Nowotschin et al (2019) and Han et al (2020).

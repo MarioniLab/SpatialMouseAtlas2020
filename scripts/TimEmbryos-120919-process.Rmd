@@ -21,8 +21,7 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
 # Summary
 
 This report generates processed data files for the SeqFISH experiment for 
-embryo3. This is only for the seqFISH library (not smFISH rounds), and includes 
-the updated dot calls Nico provided on 25 May 2020.
+embryo3. This is only for the seqFISH library (not smFISH rounds).
 
 ```{r}
 library(SingleCellExperiment)
@@ -41,8 +40,7 @@ library(gganimate)
 ```
 
 ```{r}
-source("spatial_functions.R")
-source("segmentation_functions.R")
+library(SpatialUtils)
 ```
 
 # Set sample specific file paths - manual check
@@ -57,8 +55,6 @@ processed_dir = "../Data/TimEmbryos-120919/processed/"
 processed_suffix = "120919"
 
 updateFiles = FALSE
-# updated_mRNA_files_dir = "../Data/TimEmbryos-120919/output/1error-sqrt6-lowerthreshold-2020-04-24/"
-# updated_cell_files_dir = "../Data/TimEmbryos-120919/output/1error-sqrt6-lowerthreshold-2020-04-24/"
 ```
 
 # Load mRNA dot information
@@ -77,52 +73,6 @@ length(mRNA_files)
 cell_files = list.files(cell_files_dir, pattern = "cellData", full.names = TRUE)
 cell_files
 length(cell_files)
-```
-
-<!-- # Update mRNA files to new thresholding 24 April 2020 -->
-
-```{r}
-if (updateFiles) {
-  updated_mRNA_files = list.files(updated_mRNA_files_dir,
-                                  pattern = "segmented", full.names = TRUE)
-  
-  # order is very important!! first files are prioritised
-  all_mRNA_files = c(updated_mRNA_files, mRNA_files)
-  all_mRNA_files_pos = sapply(all_mRNA_files, function(x){
-    pos_val_raw = unlist(strsplit(x, "-"))
-    pos_val = grep("Pos[0-9]", pos_val_raw, value = TRUE)
-    return(pos_val)
-  })
-  all_mRNA_files_pos
-  
-  # reassign the mRNA files
-  mRNA_files <- all_mRNA_files[!duplicated(all_mRNA_files_pos)]
-  mRNA_files
-  length(mRNA_files)
-}
-```
-
-<!-- # Update cell files to new thresholding 24 April 2020 -->
-
-```{r}
-if (updateFiles) {
-  updated_cell_files = list.files(updated_cell_files_dir,
-                                  pattern = "cellData", full.names = TRUE)
-  
-  # order is very important!! first files are prioritised
-  all_cell_files = c(updated_cell_files, cell_files)
-  all_cell_files_pos = sapply(all_cell_files, function(x){
-    pos_val_raw = unlist(strsplit(x, "-"))
-    pos_val = grep("Pos[0-9]", pos_val_raw, value = TRUE)
-    return(pos_val)
-  })
-  all_cell_files_pos
-  
-  # reassign the cell files
-  cell_files <- all_cell_files[!duplicated(all_cell_files_pos)]
-  cell_files
-  length(cell_files)
-}
 ```
 
 # Set embryo and Estage labels - manual check
@@ -167,7 +117,7 @@ params = list(
 
 # Function to process
 
-Located in spatial_functions.R as `processSeqFISH`.
+Located in SpatialUtils package as `processSeqFISH`.
 
 ```{r}
 out = processSeqFISH(params)

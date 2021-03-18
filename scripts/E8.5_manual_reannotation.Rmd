@@ -1,0 +1,144 @@
+---
+title: "E8.5 seqFISH - Manual reannotation of cell types"
+author: "Shila Ghazanfar"
+date: "31/07/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 10 
+                     fig_height: 8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = TRUE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+# Summary
+
+Here I take the cell classification from KNN when integrating with the 10X 
+gastrulation atlas, as well as joint subclustering of 10X and seqFISH cells.
+I then reassign the KNN based cell type labels based on manual reannotation
+from Tim.
+
+There are three important parts:
+
+- reannotate all of joint subclusters
+
+- reassign virtually dissected subset of cluster 6 as Gut tube
+
+- redefine "Def. endoderm" as "Definitive endoderm"
+
+I don't actually need the count data to perform this, just the metadata.
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(data.table)
+```
+
+# Load automated cell type annotation
+
+```{r}
+knn = readRDS("../analysis_output/E8.5/E8.5_naive_pred_knn_libsize.Rds")
+knn[knn == "Def. endoderm"] <- "Definitive endoderm"
+celltype_mapped_manual <- knn[,"celltype_mapped"]
+```
+
+# Load joint subclustering
+
+```{r}
+subclusters_raw = readRDS("../analysis_output/E8.5/E8.5_joint_subclustering_libsize.Rds")
+subclusters = subclusters_raw[rownames(knn)]
+```
+
+# Reannotate joint subclusters
+
+```{r}
+new_annotation = read.delim("../analysis_output/guttubecells/annotation_changes.tsv",
+                            header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+new_annotation
+
+for (i in 1:nrow(new_annotation)) {
+  
+  celltype_mapped_manual[subclusters == rownames(new_annotation)[i]] <- new_annotation[i,"New.name"]
+  
+}
+```
+
+# Reassign virtually dissected subset of cluster 6 as Gut tube
+
+```{r}
+gut_tube_cells_list = sapply(list.files("../analysis_output/guttubecells/",
+                                        pattern = "cells", full.names = TRUE), readRDS, simplify = FALSE)
+
+gut_tube_cells = unlist(gut_tube_cells_list)
+length(gut_tube_cells)
+length(unique(gut_tube_cells))
+table(subclusters[gut_tube_cells])
+
+celltype_mapped_manual[gut_tube_cells] <- "Gut tube"
+```
+
+# redefine "Def. endoderm" as "Definitive endoderm"
+
+```{r}
+celltype_mapped_manual[celltype_mapped_manual == "Def. endoderm"] <- "Definitive endoderm"
+```
+
+# Combine
+
+```{r}
+sort(table(celltype_mapped_manual))
+table(celltype_mapped_manual == knn[,"celltype_mapped"])
+
+tab = unclass(table(knn[,"celltype_mapped"], celltype_mapped_manual))
+tablong = sort_df(melt(tab), "value")
+tablong[as.character(tablong[,1]) != as.character(tablong[,2]) & tablong[,3] > 0,]
+
+knn_new <- data.frame(celltype_mapped_refined = factor(celltype_mapped_manual),
+                      celltype_mapped = factor(knn[,"celltype_mapped"]),
+                      celltype_mapped_alternative = factor(knn[,"celltype_alternative"]),
+                      celltype_mapping_score = as.numeric(knn[, "mapping_score"]),
+                      celltype_mapping_score_alternative = as.numeric(knn[, "mapping_alternative_score"]))
+
+dim(knn_new)
+head(knn_new)
+```
+
+# Finish
+
+```{r}
+saveRDS(knn_new, file = "../analysis_output/E8.5/celltype_annotation_refined.Rds")
+saveRDS(levels(knn_new$celltype_mapped_refined), file = "../analysis_output/E8.5/celltypes_refined.Rds")
+```
+
+
+```{r}
+sessionInfo()
+```

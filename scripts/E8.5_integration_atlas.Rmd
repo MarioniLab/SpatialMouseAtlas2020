@@ -1,0 +1,398 @@
+---
+title: "E8.5 seqFISH - Integrating with atlas data"
+author: "Shila Ghazanfar"
+date: "23/07/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 10 
+                     fig_height: 8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = TRUE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+# Summary
+
+In this document I focus on classification of cell types using MNN using the 
+gastrulation atlas data. Using library size normalised and z-stack batch 
+corrected data.
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(data.table)
+```
+
+Load spatial and segmentation functions.
+
+```{r}
+library(SpatialUtils)
+```
+
+# Load spatial cell and mRNA data
+
+Output of TimEmbryos-E8.5.Rmd
+
+```{r}
+sce_filt = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+sce_filt
+
+cData_filt = as.data.frame(colData(sce_filt))
+```
+
+# Replace area normalised with library size normalised
+
+```{r}
+sce_filt <- reNormalise(sce_filt)
+assay(sce_filt, "cosineNorm") <- cosineNorm(assay(sce_filt, "logcounts"))
+```
+
+# Load E8.25 and E8.5 atlas data
+
+Also fix gene name for [Cavin3](http://www.informatics.jax.org/marker/MGI:1923422).
+
+Also parse annotation of various celltypes.
+
+```{r}
+if (!file.exists("../analysis_output/E8.5/atlas_for_celltype_mapping.Rds")) {
+  atlas = readRDS("../Data/atlas/sce_atlas_E8.25_E8.5.Rds")
+  rowData(atlas)[rowData(atlas)[,"SYMBOL"] == "Prkcdbp", "SYMBOL"] <- "Cavin3"
+  rowData(atlas)[rowData(atlas)[,"SymbolUniq"] == "Prkcdbp", "SymbolUniq"] <- "Cavin3"
+  rownames(atlas) <- rowData(atlas)$SymbolUniq
+  atlas <- computeSumFactors(atlas)
+  atlas <- multiBatchNorm(atlas, batch = atlas$sample, preserve.single = TRUE)
+  atlas
+  head(colData(atlas))
+  
+  # Restrict atlas to cells that have a cell type label
+  atlas = atlas[,!is.na(atlas$celltype)]
+  atlas
+  
+  # Subset atlas down to E8.5
+  atlas = atlas[, atlas$stage == "E8.5"]
+  
+  atlas
+  
+  # Batch aware normalise
+  atlas <- multiBatchNorm(atlas, batch = atlas$sample, preserve.single = TRUE)
+  saveRDS(atlas, file = "../analysis_output/E8.5/atlas_for_celltype_mapping.Rds")
+} else {
+  atlas = readRDS("../analysis_output/E8.5/atlas_for_celltype_mapping.Rds")
+}
+
+if (!file.exists("../analysis_output/E8.5/atlas_sub.Rds")) {
+  
+  # Restrict atlas to genes in SeqFISH
+  atlas_sub = atlas[rowData(atlas)$SymbolUniq %in% rownames(sce_filt),]
+  atlas_sub
+  assay(atlas_sub, "cosineNorm") <- cosineNorm(logcounts(atlas_sub))
+  
+  ############################
+  ############################
+  ############################
+  # Refine annotation
+  
+  # Collapse blood celltypes
+  atlas_sub$celltype_parsed = atlas_sub$celltype
+  atlas_sub$celltype_parsed[atlas_sub$celltype_parsed %in% c("Erythroid1", "Erythroid2", "Erythroid3")] <- "Erythroid"
+  atlas_sub$celltype_parsed[atlas_sub$celltype_parsed %in% c("Blood progenitors 1", "Blood progenitors 2")] <- "Blood progenitors"
+  
+  # Expand paraxial and somitic mesoderm types
+  paraxial = read.table("../Data/atlas/annotation/paraxialmeso_e85_annotation.txt",
+                        header = TRUE, row.names = 1)
+  table(paraxial$celltype, useNA = "always")
+  table(atlas_sub[,rownames(paraxial)]$celltype, useNA = "always")
+  
+  paraxial_names = c("Head_mesoderm" = "Cranial mesoderm",
+                     "Anterior-most_somites" = "Anterior somitic tissues",
+                     "Sclerotome" = "Sclerotome",
+                     "Dermomyotome" = "Dermomyotome")
+  paraxial$celltypeparsed = paraxial_names[as.character(paraxial$celltype)]
+  table(paraxial$celltype, paraxial$celltypeparsed)
+  
+  atlas_sub$celltype_parsed[match(rownames(paraxial), colnames(atlas_sub))] <- as.character(paraxial[,"celltypeparsed"])
+  
+  somitic = read.table("../Data/atlas/annotation/somiticmeso_e85_annotation.txt",
+                       header = TRUE, row.names = 1)
+  table(somitic$celltype, useNA = "always")
+  table(atlas_sub[,rownames(somitic)]$celltype, useNA = "always")
+  
+  somitic_names = c("Posterior-most_somites" = "Posterior somitic tissues",
+                    "Presomitic_mesoderm" = "Presomitic mesoderm")
+  somitic$celltypeparsed = somitic_names[as.character(somitic$celltype)]
+  table(somitic$celltype, somitic$celltypeparsed)
+  
+  atlas_sub$celltype_parsed[match(rownames(somitic), colnames(atlas_sub))] <- as.character(somitic[,"celltypeparsed"])
+  
+  # Posterior somites / pre-somitic mesoderm  only pre-somitic mesoderm
+  # i.e. replace "Posterior somitic tissues" with "Presomitic mesoderm"
+  atlas_sub$celltype_parsed[atlas_sub$celltype_parsed == "Posterior somitic tissues"] <- "Presomitic mesoderm"
+  
+  # Replace ExE mesoderm with "Lateral plate mesoderm"
+  atlas_sub$celltype_parsed[atlas_sub$celltype_parsed == "ExE mesoderm"] <- "Lateral plate mesoderm"
+  
+  # Rename Gut to "Gut tube"
+  atlas_sub$celltype_parsed[atlas_sub$celltype_parsed == "Gut"] <- "Gut tube"
+
+    # Rename Def. endoderm to "Definitive endoderm"
+  atlas_sub$celltype_parsed[atlas_sub$celltype_parsed == "Def. endoderm"] <- "Definitive endoderm"
+
+    # Rename Pharyngeal mesoderm to "Splanchnic mesoderm"
+  atlas_sub$celltype_parsed[atlas_sub$celltype_parsed == "Pharyngeal mesoderm"] <- "Splanchnic mesoderm"
+  
+  allCellTypes = sort(unique(atlas_sub$celltype_parsed))
+  sort(table(atlas_sub$celltype_parsed))
+  
+  celltypesToKeep = names(which(table(atlas_sub$celltype_parsed) >= 25))
+  
+  celltypesToKeep
+  print(setdiff(allCellTypes, celltypesToKeep))
+  saveRDS(celltypesToKeep, file = "../analysis_output/E8.5/celltypesToKeep.Rds")
+  
+  atlas_sub <- atlas_sub[, atlas_sub$celltype_parsed %in% celltypesToKeep]
+  saveRDS(atlas_sub, file = "../analysis_output/E8.5/atlas_sub.Rds")
+} else {
+  atlas_sub = readRDS("../analysis_output/E8.5/atlas_sub.Rds")
+}
+
+g = ggplot(cbind(as.data.frame(reducedDim(atlas_sub, "umap")),
+                 celltype = atlas_sub$celltype),
+           aes(x = x, y = y, colour = celltype)) + 
+  geom_point() + 
+  scale_colour_manual(values = celltype_colours) + 
+  theme_classic() +
+  NULL
+g
+
+g = ggplot(cbind(as.data.frame(reducedDim(atlas_sub, "umap")),
+                 celltype = atlas_sub$celltype_parsed),
+           aes(x = x, y = y, colour = celltype)) + 
+  geom_point() + 
+  scale_colour_manual(values = celltype_colours) + 
+  theme_classic() +
+  NULL
+g
+```
+
+# Joint embedding of seqFISH and atlas data
+
+Get the joint embedding for visualisation and initial classification. Also
+identify the closest cell IDs within the joint embedding.
+
+```{r}
+joint_mnn_pca = getJointPCA(atlas_sub,
+                            sce_filt,
+                            assayNameAtlas = "logcounts",
+                            assayNameSpatial = "logcounts",
+                            spatial_batch = c("embryo","pos", "z"),
+                            inc_z = TRUE,
+                            irlba = FALSE,
+                            multibatch_2 = FALSE)
+saveRDS(joint_mnn_pca, "../analysis_output/E8.5/E8.5_joint_PCA_corrected_libsize.Rds")
+
+joint_mnn_umap = calculateUMAP(joint_mnn_pca, transposed = TRUE)
+rownames(joint_mnn_umap) <- rownames(joint_mnn_pca)
+saveRDS(joint_mnn_umap, "../analysis_output/E8.5/E8.5_joint_UMAP_corrected_libsize.Rds")
+```
+
+# Extract KNN-based classification and quality score
+
+```{r}
+knns = BiocNeighbors::queryKNN(
+  joint_mnn_pca[colnames(atlas_sub),],
+  joint_mnn_pca[colnames(sce_filt),],
+  k = 25, get.index = TRUE, get.distance = FALSE)
+
+k.mapped = vectorSubset(colnames(atlas_sub), knns$index)
+rownames(k.mapped) <- colnames(sce_filt)
+saveRDS(k.mapped, "../analysis_output/E8.5/E8.5_naive_k.mapped_libsize.Rds")
+predmat = vectorMatch(atlas_sub$celltype_parsed, k.mapped, colnames(atlas_sub))
+knn_out = get_MVS_vals(predmat)
+saveRDS(knn_out, "../analysis_output/E8.5/E8.5_naive_pred_knn_libsize.Rds")
+```
+
+# Get a joint PCA and metadata representation
+
+```{r}
+pred_knn_joint_unsorted = c(as.character(knn_out[,"celltype_mapped"]), as.character(atlas_sub$celltype_parsed))
+names(pred_knn_joint_unsorted) <- c(rownames(knn_out), colnames(atlas_sub))
+
+joint_df = data.frame(
+  umap1 = joint_mnn_umap[,1],
+  umap2 = joint_mnn_umap[,2],
+  ctype = pred_knn_joint_unsorted[rownames(joint_mnn_umap)],
+  type = ifelse(substring(rownames(joint_mnn_umap),1,1) == "e", "seqFISH", "atlas")
+)
+g0 = ggplot(
+  joint_df, aes(x = umap1, y = umap2)) +
+  geom_point(aes(colour = type), size = 1) +
+  scale_colour_manual(values = c("seqFISH" = "red", "atlas" = "black")) +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  # coord_fixed() +
+  NULL
+g0
+
+g = ggplot(
+  joint_df, aes(x = umap1, y = umap2)) +
+  geom_point(aes(colour = ctype), size = 1) +
+  scale_colour_manual(values = celltype_colours) +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  NULL
+g + facet_wrap(~type) + plot_layout(nrow = 1)
+```
+
+# Extract closest cells
+
+```{r}
+closest_atlas_cell_ind = BiocNeighbors::queryKNN(
+  joint_mnn_pca[colnames(atlas_sub),],
+  joint_mnn_pca[colnames(sce_filt),],
+  k = 1, get.index = TRUE, get.distance = FALSE)
+closest_atlas_cell = as.character(vectorSubset(colnames(atlas_sub), closest_atlas_cell_ind[[1]]))
+names(closest_atlas_cell) <- colnames(sce_filt)
+saveRDS(closest_atlas_cell, "../analysis_output/E8.5/E8.5_closest_atlas_cell_libsize.Rds")
+
+closest_atlas_celltype = as.character(vectorMatch(
+  atlas_sub$celltype_parsed, as.matrix(closest_atlas_cell),
+  colnames(atlas_sub)))
+names(closest_atlas_celltype) <- colnames(sce_filt)
+saveRDS(closest_atlas_celltype, "../analysis_output/E8.5/E8.5_closest_atlas_celltype_libsize.Rds")
+
+closest_spatial_cells_ind = do.call(cbind, lapply(split(colnames(sce_filt), interaction(sce_filt$embryo, sce_filt$z)), function(n) {
+  n_ind = BiocNeighbors::queryKNN(
+    joint_mnn_pca[n,],
+    joint_mnn_pca[colnames(atlas_sub),],
+    k = 1, get.index = TRUE, get.distance = FALSE)
+  return(n[n_ind[[1]]])
+}))
+rownames(closest_spatial_cells_ind) <- colnames(atlas_sub)
+saveRDS(closest_spatial_cells_ind, "../analysis_output/E8.5/E8.5_atlas_closest_spatial_cells_libsize.Rds")
+```
+
+# Jointly cluster and subcluster the atlas and spatial cells
+
+```{r}
+graph = buildSNNGraph(joint_mnn_pca, transposed = TRUE)
+clusters_graph = cluster_louvain(graph)
+clusters = as.numeric(membership(clusters_graph))
+names(clusters) <- rownames(joint_mnn_pca)
+table(clusters, useNA = "always")
+
+subclusters = clusters
+for (clust in unique(clusters)) {
+  
+  print(clust)
+  
+  # perform subclustering within this group
+  graph = buildSNNGraph(joint_mnn_pca[clusters == clust,], transposed = TRUE)
+  clusters_graph = cluster_louvain(graph)
+  subcluster = as.numeric(membership(clusters_graph))
+  names(subcluster) <- rownames(joint_mnn_pca)[clusters == clust]
+  
+  subclusters[clusters == clust] <- paste0(clust, ".", subcluster)
+}
+saveRDS(subclusters, "../analysis_output/E8.5/E8.5_joint_subclustering_libsize.Rds")
+```
+
+```{r}
+tab = unclass(table(joint_df$ctype[joint_df$type == "atlas"], subclusters[joint_df$type == "atlas"]))
+
+sort(apply(tab,2,function(x) sort(x, decreasing = TRUE)[2]))
+
+sort(tab["Forebrain/Midbrain/Hindbrain",])
+
+# for each subcluster, what is it's majority atlas class?
+majority_subcluster = sapply(sort(unique(subclusters)), function(clust) {
+  if (!clust %in% colnames(tab)) return(NA)
+  names(sort(tab[,clust], decreasing = TRUE))[1]
+})
+table(majority_subcluster, useNA = "always")
+
+knntab = unclass(table(joint_df$ctype[joint_df$type == "seqFISH"], subclusters[joint_df$type == "seqFISH"]))
+
+majority_KNN = sapply(sort(unique(subclusters)), function(clust) {
+  if (!clust %in% colnames(knntab)) return(NA)
+  names(sort(knntab[,clust], decreasing = TRUE))[1]
+})
+table(majority_KNN, useNA = "always")
+
+
+numCellsDF = cbind(data.frame(unclass(table(subclusters, joint_df$type))), majority_subcluster, majority_KNN)
+numCellsDF
+
+setdiff(as.character(joint_df$ctype), majority_subcluster)
+
+joint_df$clust = subclusters
+
+g = ggplot(
+  joint_df, aes(x = umap1, y = umap2)) +
+  geom_point(aes(colour = clust), size = 1) +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  NULL
+g + facet_wrap(~type) + plot_layout(nrow = 1)
+```
+
+
+```{r}
+coord_x_named = c(sce_filt$x_global_affine, reducedDim(atlas_sub, "umap")[,1])
+names(coord_x_named) <- c(colnames(sce_filt), colnames(atlas_sub))
+coord_y_named = c(-sce_filt$y_global_affine, reducedDim(atlas_sub, "umap")[,2])
+names(coord_y_named) <- c(colnames(sce_filt), colnames(atlas_sub))
+split = c(paste0(sce_filt$embryo, sce_filt$z), rep("atlas", ncol(atlas_sub)))
+names(split) <- c(colnames(sce_filt), colnames(atlas_sub))
+
+joint_df$coord_x = coord_x_named[rownames(joint_df)]
+joint_df$coord_y = coord_y_named[rownames(joint_df)]
+joint_df$split = split[rownames(joint_df)]
+
+brain_clusts = rownames(numCellsDF)[numCellsDF$majority_subcluster == "Forebrain/Midbrain/Hindbrain" & !is.na(numCellsDF$majority_subcluster)]
+
+gList = sapply(brain_clusts, function(clustval) {
+  g = ggplot(
+  joint_df, aes(x = coord_x, y = coord_y)) +
+  geom_point(aes(colour = clust == clustval), size = 0.2) +
+  scale_colour_manual(values = c("TRUE" = "black", "FALSE" = "lightgrey")) +
+  theme_classic() +
+  theme(legend.position = "none") +
+    ylim(clustval) +
+  NULL
+  return(g + facet_wrap(~split, scales = "free", nrow = 1))
+}, simplify = FALSE)
+g = wrap_plots(gList, ncol = 1)
+ggsave(g, file = "../Figures/brain_joint_subclusters.png", height = 30, width = 20)
+```
+
+```{r}
+sessionInfo()
+```

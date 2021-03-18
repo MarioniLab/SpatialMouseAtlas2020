@@ -1,0 +1,49 @@
+scripts are placed in order of use
+
+celltype_colours.R
+- colours associated with each developmental cell type
+
+download_atlas_E8.25_E8.5.Rmd
+- downloads scRNA-Seq mouse gastrulation atlas data from Bioconductor
+
+E8.5_image.Rmd
+- overlay field of view information onto brightfield images of embryos
+
+TimEmbryos-102219-process.Rmd
+- processes detected mRNAs and segmentation and converts into data.frame and 
+SingleCellExperiment object for 102219 experiment
+
+TimEmbryos-120919-process.Rmd
+- processes detected mRNAs and segmentation and converts into data.frame and 
+SingleCellExperiment object for 120919 experiment
+
+E8.5_combine_sce.Rmd
+- combines objects from each individual experiment and combines, and affine 
+scales
+
+TimEmbryos-E8.5-generateSpatialNeighboursGraph.Rmd
+- generates cell-cell contact network
+
+TimEmbryos-E8.5_normalisation.Rmd
+- QC and normalisation of gene expression
+
+E8.5_smFISH_generate.Rmd
+- convert smFISH detected mRNA to a gene expression counts matrix
+
+E8.5_integration_atlas.Rmd
+- integrate with atlas data classifying cell types and generating joint 
+clusters and subclusters
+
+E8.5_manual_reannotation.Rmd
+- manually reannotate joint subclusters using marker genes
+
+E8.5_fastMNN.Rmd
+- construct batch corrected expression for visualisation (e.g. in Shiny
+and in manuscript figures)
+
+E8.5_Mesenchyme.Rmd
+- closer look at mesenchyme cell type
+
+E8.5_Nowotschin.Rmd
+- integration of data with gut tube cells from Nowotschin et al (2019).
+

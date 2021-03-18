@@ -1,0 +1,163 @@
+---
+title: "E8.5 seqFISH - Reconstruct batch-corrected expression"
+author: "Shila Ghazanfar"
+date: "03/08/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 16
+                     fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = TRUE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+library(reshape)
+```
+
+```{r}
+source("celltype_colours.R")
+source("spatial_functions.R")
+source("segmentation_functions.R")
+source("neighbourSegments.R")
+```
+
+# Summary
+
+Here I perform fastMNN to result in reconstructed normalised gene expression 
+values, for visualisation. 
+
+# Load spatial data
+
+```{r}
+sce = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+
+sce <- reNormalise(sce)
+
+sce
+```
+
+# params
+
+```{r}
+npcs = 50
+```
+
+# Perform fastMNN
+
+```{r}
+mnn_out = batchelor::fastMNN(sce, 
+                             batch = sce$embryo_pos_z,
+                             subset.row = !rownames(sce) %in% "Xist",
+                             correct.all = TRUE,
+                             assay.type = "logcounts",
+                             cos.norm = FALSE,
+                             d = npcs)
+
+mnn_out
+saveRDS(mnn_out, file = "../analysis_output/E8.5/E8.5_fastMNN.Rds")
+```
+
+# Perform fastMNN per embryo separately
+
+```{r, eval = FALSE}
+sce_split = sapply(unique(sce$embryo), function(em){
+    sce[,sce$embryo == em]
+}, simplify = FALSE)
+
+mnn_out_list = list()
+for (em in names(sce_split)) {
+    sce_sub = sce_split[[em]]
+    mnn_out_list[[em]] = batchelor::fastMNN(sce_sub, 
+                                            batch = sce_sub$embryo_pos_z,
+                                            subset.row = !rownames(sce_sub) %in% "Xist",
+                                            correct.all = TRUE,
+                                            assay.type = "logcounts",
+                                            cos.norm = FALSE,
+                                            d = npcs)
+}
+
+mnn_out_list
+saveRDS(mnn_out_list, file = "../analysis_output/E8.5/E8.5_fastMNN_split.Rds")
+```
+
+# Perform regular MNN
+
+```{r, eval = FALSE}
+mnn_out = batchelor::mnnCorrect(sce, 
+                                batch = as.character(sce$embryo_pos_z),
+                                subset.row = !rownames(sce) %in% "Xist",
+                                correct.all = TRUE,
+                                assay.type = "logcounts",
+                                cos.norm.in = TRUE,
+                                cos.norm.out = FALSE,
+                                svd.dim = npcs)
+rownames(mnn_out)[nrow(mnn_out)] <- "Xist"
+mnn_out
+saveRDS(mnn_out, file = "../analysis_output/E8.5/E8.5_mnnCorrect.Rds")
+```
+
+# Perform regular MNN per embryo separately
+
+```{r, eval = FALSE}
+sce_split = sapply(unique(sce$embryo), function(em){
+    sce[,sce$embryo == em]
+}, simplify = FALSE)
+
+mnn_out_list = list()
+for (em in names(sce_split)) {
+    sce_sub = sce_split[[em]]
+    mnn_out = mnnCorrect(sce_sub, 
+                         batch = sce_sub$embryo_pos_z,
+                         subset.row = !rownames(sce_sub) %in% "Xist",
+                         correct.all = TRUE,
+                         assay.type = "logcounts",
+                         cos.norm.in = TRUE,
+                         cos.norm.out = FALSE,
+                         svd.dim = npcs)
+    rownames(mnn_out)[nrow(mnn_out)] <- "Xist"
+    mnn_out
+    mnn_out_list[[em]] <- mnn_out
+}
+
+mnn_out_list
+saveRDS(mnn_out_list, file = "../analysis_output/E8.5/E8.5_mnnCorrect_split.Rds")
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

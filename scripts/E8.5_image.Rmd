@@ -1,0 +1,254 @@
+---
+title: "E8.5 seqFISH - Generate image of the slide explorer"
+author: "Shila Ghazanfar"
+date: "04/07/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 16
+                     fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = TRUE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(magick)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+library(reshape)
+```
+
+```{r}
+library(SpatialUtils)
+```
+
+# Summary
+
+Take the JPG images and overlay boxes onto them, but with the proper
+orientation as given in the paper.
+
+```{r}
+dir = "../Data/TimEmbryos-102219/"
+```
+
+
+```{r}
+# brightness edited by tim, and converted to jpg & remove overlay in Fiji by shila
+img.path = paste0(dir, "slide_explorer/Slide Explorer_E1-2_BC.jpg")
+
+fov_info_all = read.csv(paste0(dir, "slide_explorer/fovinfo.csv"),
+                    header = TRUE)
+
+ymax = 3021
+xmax = 3174
+```
+
+# Subset to embryo 1
+
+```{r}
+fov_info = subset(fov_info_all, fov <= 29)
+fov_info_long = cbind(fov_info[rep(seq_len(nrow(fov_info)), each = 4),1:3],
+                      x_box = c(t(fov_info[,c(4:7)])),
+                      y_box = c(t(fov_info[,c(8:11)])))
+```
+
+
+```{r}
+img_plot = image_ggplot(magick::image_read(img.path))
+
+x_range = range(fov_info_long$x_box)
+y_range = range(fov_info_long$y_box)
+
+diff(x_range)
+diff(y_range)
+
+buffer_pixels = 50
+
+x_range = x_range + buffer_pixels*c(-1,1)
+y_range = y_range + buffer_pixels*c(-1,1)
+
+diff(x_range)
+diff(y_range)
+
+fig.width = 6
+fig.height = fig.width*diff(y_range)/diff(x_range)
+
+g_un = img_plot + 
+  geom_polygon(data = fov_info_long, aes(x = x_box, y = y_box, group = fov),
+               colour = "red", fill = NA) +
+  coord_fixed() + 
+  coord_cartesian(xlim = x_range,
+                  ylim = y_range) +
+  NULL
+ggsave(g_un, file = "../Figures/slide_explorer_embryo1_unlabelled.png",
+      width = fig.width, height = fig.height)
+g = g_un + 
+  geom_text(data = fov_info, aes(x = x, y = y, label = fov), colour = "red") + 
+  NULL
+ggsave(g, file = "../Figures/slide_explorer_embryo1_labelled.png",
+      width = fig.width, height = fig.height)
+```
+
+
+# Subset to embryo 2 no rotation
+
+```{r}
+fov_info = subset(fov_info_all, fov > 29)
+fov_info_long = cbind(fov_info[rep(seq_len(nrow(fov_info)), each = 4),1:3],
+                      x_box = c(t(fov_info[,c(4:7)])),
+                      y_box = c(t(fov_info[,c(8:11)])))
+
+angle = -20
+
+img_plot =  image_ggplot(
+  magick::image_flop(magick::image_read(img.path))
+)
+
+x_range = range(xmax - fov_info_long$x_box)
+y_range = range(fov_info_long$y_box)
+
+diff(x_range)
+diff(y_range)
+
+buffer_pixels = 100
+
+x_range = x_range + buffer_pixels*c(-1,1)
+y_range = y_range + buffer_pixels*c(-1,1)
+
+diff(x_range)
+diff(y_range)
+
+fig.width = 7
+fig.height = fig.width*diff(y_range)/diff(x_range)
+
+g_un = img_plot + 
+  geom_polygon(data = fov_info_long, aes(x = xmax - x_box, y = y_box, group = fov),
+               colour = "red", fill = NA) +
+  coord_fixed() + 
+  coord_cartesian(xlim = x_range,
+                  ylim = y_range) +
+  NULL
+ggsave(g_un, file = "../Figures/slide_explorer_embryo2_unlabelled.png",
+      width = fig.width, height = fig.height)
+g = g_un + geom_text(data = fov_info, aes(x = xmax - x, y = y, label = fov), colour = "red",
+            angle = angle) +
+  NULL
+ggsave(g, file = "../Figures/slide_explorer_embryo2_labelled.png",
+      width = fig.width, height = fig.height)
+
+
+img_plot_rot =  magick::image_rotate(magick::image_read("../Figures/slide_explorer_embryo2_unlabelled.png"),
+                       angle)
+
+magick::image_write(img_plot_rot, path = "../Figures/slide_explorer_embryo2_unlabelled.png")
+
+
+img_plot_rot =  magick::image_rotate(magick::image_read("../Figures/slide_explorer_embryo2_labelled.png"),
+                       angle)
+
+magick::image_write(img_plot_rot, path = "../Figures/slide_explorer_embryo2_labelled.png")
+```
+
+# Embryo 3
+
+Take the JPG images and overlay boxes onto them, but with the proper
+orientation as given in the paper.
+
+```{r}
+dir = "../Data/TimEmbryos-120919/"
+
+# new file with contrast and brightness adjusted
+img.path = paste0(dir, "slide_explorer/Slide Explorer_E3_BC.jpg")
+
+fov_info_all = read.csv(paste0(dir, "slide_explorer/fovinfo.csv"),
+                    header = TRUE)
+
+fov_info = fov_info_all
+fov_info_long = cbind(fov_info[rep(seq_len(nrow(fov_info)), each = 4),1:3],
+                      x_box = c(t(fov_info[,c(4:7)])),
+                      y_box = c(t(fov_info[,c(8:11)])))
+
+angle = -35
+
+img_plot =  image_ggplot(
+  magick::image_flop(magick::image_read(img.path))
+)
+
+x_range = range(xmax - fov_info_long$x_box)
+y_range = range(fov_info_long$y_box)
+
+diff(x_range)
+diff(y_range)
+
+buffer_pixels = 100
+
+x_range = x_range + buffer_pixels*c(-1,1)
+y_range = y_range + buffer_pixels*c(-1,1)
+
+diff(x_range)
+diff(y_range)
+
+fig.width = 7
+fig.height = fig.width*diff(y_range)/diff(x_range)
+
+g_un = img_plot + 
+  geom_polygon(data = fov_info_long, aes(x = xmax - x_box, y = y_box, group = fov),
+               colour = "red", fill = NA) +
+  coord_fixed() + 
+  coord_cartesian(xlim = x_range,
+                  ylim = y_range) +
+  NULL
+ggsave(g_un, file = "../Figures/slide_explorer_embryo3_unlabelled.png",
+      width = fig.width, height = fig.height)
+g = g_un + geom_text(data = fov_info, aes(x = xmax - x, y = y, label = fov), colour = "red",
+            angle = angle) +
+  NULL
+ggsave(g, file = "../Figures/slide_explorer_embryo3_labelled.png",
+      width = fig.width, height = fig.height)
+
+img_plot_rot =  magick::image_rotate(magick::image_read("../Figures/slide_explorer_embryo3_unlabelled.png"),
+                       angle)
+
+magick::image_write(img_plot_rot, path = "../Figures/slide_explorer_embryo3_unlabelled.png")
+
+img_plot_rot =  magick::image_rotate(magick::image_read("../Figures/slide_explorer_embryo3_labelled.png"),
+                       angle)
+
+magick::image_write(img_plot_rot, path = "../Figures/slide_explorer_embryo3_labelled.png")
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

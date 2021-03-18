@@ -1,0 +1,745 @@
+---
+title: "E8.5 seqFISH - Mesenchyme"
+author: "Shila Ghazanfar"
+date: "27/10/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 16
+                     fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = FALSE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+library(RColorBrewer)
+```
+
+```{r}
+library(SpatialUtils)
+```
+
+```{r}
+na_colour = "white"
+polygon_size = 0.1
+polygon_colour = "black"
+```
+
+# Summary
+
+Here we examine the mesenchyme.
+
+# Load spatial data
+
+```{r}
+sce = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+sce
+
+sce <- reNormalise(sce)
+```
+
+# Add cell type and clustering information
+
+```{r}
+mapping_dt = readRDS("../analysis_output/E8.5/celltype_annotation_refined.Rds")
+colData(sce) <- cbind(colData(sce), mapping_dt[colnames(sce), setdiff(colnames(mapping_dt),colnames(colData(sce)))])
+```
+
+# Add cell neighbourhood
+
+```{r}
+graph = readRDS("../analysis_output/E8.5/E8.5_neighbourGraph_1.3.Rds")
+```
+
+# Load imputed data
+
+```{r}
+library(DelayedArray)
+library(HDF5Array)
+
+file_combined = "../analysis_output/imputation/combined.h5"
+cnames = readRDS("../analysis_output/imputation/combined_cnames.Rds")
+rnames = readRDS("../analysis_output/imputation/combined_rnames.Rds")
+
+imp <- HDF5Array(filepath = file_combined, name = "logcounts")
+rownames(imp) <- rnames
+colnames(imp) <- cnames
+
+genes_imp = rnames
+```
+
+# Load mouse gastrulation metadata
+
+```{r}
+atlas = readRDS("../analysis_output/E8.5/atlas_for_celltype_mapping.Rds")
+atlas_umap = reducedDim(atlas, "umap")
+
+plot(atlas_umap, pch = 16, cex = 0.3, asp = 1)
+```
+
+Plot the relative weighting of the mesenchyme cells for each of the mesenchyme 
+subregions. For each M-group, calculate the sum of ranking for these cells
+
+# Do the mesenchyme cells cluster separately?
+
+```{r}
+# perform louvain clustering on the corrected mes
+if (!file.exists("../analysis_output/E8.5/Mesenchyme_subclusters.Rds")) {
+  snn = buildSNNGraph(t(mes_corrected))
+  clusters_graph = cluster_louvain(snn)
+  clusters = as.numeric(membership(clusters_graph))
+  names(clusters) <- rownames(mes_corrected)
+  table(clusters, useNA = "always")
+  saveRDS(clusters, file = "../analysis_output/E8.5/Mesenchyme_subclusters.Rds")
+}
+clusters = readRDS("../analysis_output/E8.5/Mesenchyme_subclusters.Rds")
+
+mes_umap_df_cluster = mes_umap_df
+mes_umap_df_cluster$cluster = factor(clusters[as.character(mes_umap_df_cluster$uniqueID)])
+
+g_umap = ggplot(mes_umap_df_cluster,
+                aes(x = UMAP1, y = UMAP2)) + 
+  geom_point(aes(colour = cluster), size = 1) +
+  theme_classic() +
+  coord_fixed() +
+  theme(axis.ticks = element_blank()) + 
+  theme(axis.text = element_blank()) +
+  scale_colour_manual(values = M_colours_2) +
+  guides(colour = guide_legend(title = "Cluster", override.aes = list(size = 5))) +
+  NULL
+g_umap + facet_grid(~embryo)
+ggsave(g_umap, file = "../Figures/Mesenchyme_subclusters_umap.pdf",
+       height = 6, width = 7)
+ggsave(g_umap + facet_grid(~embryo), file = "../Figures/Mesenchyme_subclusters_umap_splitembryo.pdf",
+       height = 6, width = 7)
+g_leg = as_ggplot(get_legend(g_umap))
+g_leg
+ggsave(g_leg, file = "../Figures/Mesenchyme_subclusters_legend.pdf",
+       height = 3, width = 2)
+
+g_space = ggplot(mes_umap_df_cluster,
+                aes(x = x, y = -y)) + 
+  geom_point(data = data.frame(x = sce$x_global_affine, y = sce$y_global_affine, embryo = sce$embryo), colour = "lightgrey", size = 0.5) +
+  geom_point(aes(colour = cluster), size = 1) +
+  theme_classic() +
+  facet_grid(~embryo) + 
+  guides(colour = guide_legend(title = "", override.aes = list(size = 5))) +
+  xlab("") +
+  ylab("") +
+  theme(legend.position = "bottom") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  coord_fixed() +
+  NULL
+g_space
+
+g_space + g_umap + plot_layout(nrow = 2, heights = c(2.5,2))
+
+addmargins(table(mes_umap_df_cluster$mes, mes_umap_df_cluster$cluster))
+```
+
+Plot the relative weighting of the mesenchyme cells for each of the mesenchyme 
+subclusters. For each cluster, calculate the sum of ranking for these cells
+
+```{r}
+k.mapped = readRDS("../analysis_output/E8.5/E8.5_naive_k.mapped_libsize.Rds")
+
+gList = list()
+
+subregions = sort(unique(as.character(clusters)))
+
+for (subregion in subregions) {
+  k.mapped_sub = k.mapped[names(which(clusters == subregion)),]
+  k.mapped_long = c(k.mapped_sub)
+  k.mapped_longvalues = rep(ncol(k.mapped_sub):1, each = nrow(k.mapped_sub))
+  # k.mapped_longvalues = rep(c(1,rep(0,ncol(k.mapped_sub)-1)), each = nrow(k.mapped_sub))
+  subregion_score = tapply(k.mapped_longvalues, k.mapped_long, sum)/nrow(k.mapped_sub)
+  
+  subregion_score_all = rep(0, nrow(atlas_umap))
+  names(subregion_score_all) <- rownames(atlas_umap)
+  subregion_score_all[names(subregion_score)] <- subregion_score
+  
+  hist(subregion_score_all)
+  
+  df = data.frame(
+    cell = rownames(atlas_umap),
+    UMAP1 = atlas_umap[,1],
+    UMAP2 = atlas_umap[,2],
+    subregion_score = subregion_score_all
+  )
+  
+  gList[[subregion]] <- ggplot(sort_df(df, "subregion_score"),
+                               aes(x = UMAP1, y = UMAP2)) + 
+    geom_point(aes(colour = subregion_score), size = 0.3) +
+    coord_fixed() +
+    theme_classic() +
+    scale_colour_gradient(low = "grey", high = "black") +
+    theme(axis.text = element_blank()) +
+    theme(axis.ticks = element_blank()) +
+    guides(colour = guide_colourbar(title = "")) +
+    ggtitle(subregion) +
+    NULL
+}
+
+g = wrap_plots(gList, nrow = 1)
+g
+
+ggsave(g, file = "../Figures/Mesenchyme_subclusters_10X_umap.pdf",
+       height = 5, width = 15)
+
+```
+
+
+Find marker genes for these clusters
+
+```{r}
+sce_sub$mes_cluster = paste0("cluster_", clusters[colnames(sce_sub)])
+
+marker_array = getMarkerArray(sce_sub, 
+                              group = "mes_cluster",
+                              block = "embryo",
+                              pseudobulk = FALSE)
+
+
+discriminating_array_list = list()
+
+groupValue = "mes_cluster"
+
+groups = setdiff(sort(unique(colData(sce_sub)[, groupValue])), "")
+
+for (grouplevel in groups) {
+    
+    print(grouplevel)
+    
+    groups2 = setdiff(groups, grouplevel)
+    
+    for (grouplevel2 in groups2) {
+        
+        print(grouplevel2)
+        
+        ma = getMarkerArray(sce_sub,
+                            # group = "iterMNN_stable",
+                            group = groupValue,
+                            block = "embryo",
+                            subset = colData(sce_sub)[, groupValue] %in% c(grouplevel,
+                                                               grouplevel2),
+                            pseudobulk = FALSE,
+                            verbose = FALSE)
+        
+        discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
+        
+    }
+    
+}
+
+discriminating_array_list[["cluster_5"]][["cluster_3"]]["Postn",,]
+marker_array["Postn",,]
+
+
+markerArrayPlot(marker_array,
+                grouplevel = "cluster_5",
+                otherGroupLabel = "All other cells",
+                onlyLabelTopRanked = TRUE,
+                FDR = 0.05,
+                LFC = 0.5)
+
+sig_genes = sort(unique(rownames(which(marker_array[,,"FDR"] < 0.05 & abs(marker_array[,,"LFC"]) > 0.5, arr = TRUE))))
+length(sig_genes)
+
+meanExp = sumCountsAcrossCells(logcounts(sce_sub)[sig_genes,],
+                               droplevels(interaction(sce_sub$embryo, sce_sub$mes_cluster)),
+                               average = TRUE)
+meanExp_rel = t(apply(meanExp, 1, function(x)x/max(x)))
+dim(meanExp)
+dim(meanExp_rel)
+h = Heatmap(meanExp_rel, col = c("grey75", "cornflowerblue", "black"),
+        column_split = gsub("embryo[0-9]\\.", "", colnames(meanExp_rel))
+        ,
+        row_split = 5
+        )
+h
+
+pdf(file = "../Figures/Mesenchyme_subclusters_markers.pdf",
+    height = 15, width = 10)
+print(h)
+dev.off()
+```
+
+Find imputed marker genes for these cells
+
+```{r}
+sce_sub_imp = SingleCellExperiment(
+  assays = list(logcounts = imp[,colnames(sce_sub)])
+)
+sce_sub_imp$mes_cluster = sce_sub$mes_cluster
+sce_sub_imp$embryo = sce_sub$embryo
+
+marker_array = getMarkerArray(sce_sub_imp, 
+                              # group = "iterMNN_stable",
+                              group = "mes_cluster",
+                              # subset = sce_sub$gut_tube_subtype != "Large intestine/Colon",
+                              block = "embryo",
+                              pseudobulk = FALSE)
+
+
+discriminating_array_list = list()
+
+groupValue = "mes_cluster"
+
+groups = setdiff(sort(unique(colData(sce_sub_imp)[, groupValue])), "")
+
+for (grouplevel in groups) {
+    
+    print(grouplevel)
+    
+    groups2 = setdiff(groups, grouplevel)
+    
+    for (grouplevel2 in groups2) {
+        
+        print(grouplevel2)
+        
+        ma = getMarkerArray(sce_sub_imp,
+                            group = groupValue,
+                            block = "embryo",
+                            subset = colData(sce_sub_imp)[, groupValue] %in% c(grouplevel,
+                                                               grouplevel2),
+                            pseudobulk = FALSE,
+                            verbose = FALSE)
+        
+        discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
+        
+    }
+    
+}
+
+discriminating_array_list[["cluster_5"]][["cluster_3"]]["Postn",,]
+marker_array["Postn",,]
+
+markerArrayPlot(marker_array,
+                grouplevel = "cluster_5",
+                otherGroupLabel = "All other cells",
+                onlyLabelTopRanked = TRUE,
+                FDR = 0.05,
+                LFC = 0.5)
+
+sig_genes = sort(unique(rownames(which(marker_array[,,"FDR"] < 0.05 & abs(marker_array[,,"LFC"]) > 0.5, arr = TRUE))))
+length(sig_genes)
+table(sig_genes %in% rownames(sce))
+sort(setdiff(sig_genes, rownames(sce)))
+
+meanExp = sumCountsAcrossCells(logcounts(sce_sub_imp)[sig_genes,],
+                               droplevels(interaction(sce_sub_imp$embryo, sce_sub_imp$mes_cluster)),
+                               average = TRUE)
+meanExp_rel = t(apply(meanExp, 1, function(x)x/max(x)))
+dim(meanExp)
+dim(meanExp_rel)
+h = Heatmap(meanExp_rel, col = c("grey75", "cornflowerblue", "black"),
+            column_split = gsub("embryo[0-9]\\.", "", colnames(meanExp_rel)),
+            row_split = 5)
+
+pdf(file = "../Figures/Mesenchyme_subclusters_markers_imputed.pdf",
+    height = 25, width = 10)
+print(h)
+dev.off()
+```
+
+# make subclusters by subsetting the batch corrected pca
+
+```{r}
+snn = buildSNNGraph(sce_sub, use.dimred = "mbPCA_cosine_MNN")
+clusters_graph = cluster_louvain(snn)
+clusters_all = paste0("cluster_all", as.numeric(membership(clusters_graph)))
+names(clusters_all) <- sce_sub$uniqueID
+
+table(clusters_all)
+
+table(clusters_all, clusters)
+
+mes_umap_df_cluster$cluster_all = clusters_all[as.character(mes_umap_df_cluster$uniqueID)]
+
+g_space = ggplot(mes_umap_df_cluster,
+                aes(x = x, y = -y)) + 
+  geom_point(data = data.frame(x = sce$x_global_affine, y = sce$y_global_affine, embryo = sce$embryo), colour = "lightgrey", size = 0.5) +
+  geom_point(aes(colour = cluster_all), size = 1) +
+  theme_classic() +
+  facet_grid(~embryo) + 
+  guides(colour = guide_legend(title = "", override.aes = list(size = 5))) +
+  xlab("") +
+  ylab("") +
+  theme(legend.position = "bottom") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  coord_fixed() +
+  NULL
+g_space
+```
+
+spatial segmented plot of mesenchyme clusters
+
+```{r}
+sce$mes_cluster = rep(NA, ncol(sce))
+sce[,colnames(sce_sub)]$mes_cluster <- sce_sub$mes_cluster
+
+boundary_polygons$mes_cluster = sce[,as.character(boundary_polygons$uniqueID)]$mes_cluster
+
+M_colours_3 = M_colours_2
+names(M_colours_3) <- paste0("cluster_", 1:5)
+
+colval = "lightgrey"
+
+for (embryoval in c("embryo1","embryo2","embryo3")) {
+  
+  g = ggplot() +
+    geom_polygon(aes(x = segmentation_vertices_x_global_affine,
+                     y = -segmentation_vertices_y_global_affine,
+                     group = uniqueID,
+                     fill = mes_cluster,
+                     colour = !is.na(mes_cluster)
+                     ),
+                 size = 0.1,
+                 data = subset(boundary_polygons, embryo == embryoval & z == 2)) +
+    scale_colour_manual(values = c("TRUE" = "black", "FALSE" = "lightgrey")) +
+    facet_grid(z~embryo) +
+    scale_fill_manual(values = M_colours_3) +
+    theme_classic() +
+    coord_fixed() +
+    theme(legend.position = "none") + 
+    ggtitle("") +
+    xlab("") +
+    theme(axis.line = element_blank()) + 
+    theme(axis.text = element_blank()) + 
+    theme(axis.title.y = element_blank()) +
+    theme(axis.ticks = element_blank()) +
+    theme(strip.background = element_blank()) +
+    theme(strip.text = element_blank()) +
+    theme(plot.title = element_text(hjust = 0.5, size = 15)) +
+    add_scalebar() +
+    NULL
+  # g
+  ggsave(g, file = paste0("../Figures/Mesenchyme_subclusters_spatial_", embryoval, ".pdf"),
+         height = 10, width = 8)
+}
+
+gg = as_ggplot(get_legend(g +
+                            theme(legend.position = "right") + 
+                            guides(fill = guide_legend(title = ""))))
+gg
+ggsave(gg, file = "../Figures/Mesenchyme_subclusters_spatial_legend.pdf",
+       height = 4, width = 2)
+```
+
+# proportional barplot of the neighbouring cell types of the different anatomical subregions
+
+for each mesenchyme cell group, identify the set of neighbours, then plot
+their breakdown in terms of celltype
+
+```{r}
+subregions = sort(unique(as.character(sce_sub$mes_cluster)))
+
+neighbour_df = NULL
+
+for (subregion in subregions) {
+  
+  subregion_cells = colnames(sce[,sce$mes_cluster == subregion & !is.na(sce$mes_cluster)])
+  
+  expanded_vertices_list = neighborhood(graph, order = 1, nodes = which(V(graph)$name %in% subregion_cells))
+  expanded_vertices = sort(setdiff(unique(unlist(lapply(expanded_vertices_list, function(x) x$name))), subregion_cells))
+  length(expanded_vertices)
+
+  df_sub = data.frame(uniqueID = expanded_vertices,
+                                   celltype = sce[,expanded_vertices]$celltype_mapped_refined,
+                                   subregion = subregion)
+  mask_types = c(names(which(table(df_sub$celltype)/nrow(df_sub) < 0.05)), "Low quality")
+  df_sub$celltype_mask = as.character(df_sub$celltype)
+  df_sub$celltype_mask[df_sub$celltype_mask %in% mask_types] <- "Other"
+  
+  neighbour_df <- rbind(neighbour_df,
+                        df_sub)
+  
+}
+
+neighbour_df$embryo = sce[,as.character(neighbour_df$uniqueID)]$embryo
+dim(neighbour_df)
+table(neighbour_df$subregion)
+
+g_all = ggplot(subset(neighbour_df, celltype != "Low quality"), aes(x = subregion)) + 
+  geom_bar(aes(fill = celltype, colour = celltype), position = "fill") + 
+  theme_classic() +
+  scale_fill_manual(values = celltype_colours, aesthetics = c("fill", "colour")) +
+  theme(legend.position = "none") +
+  xlab("") + 
+  ylab("") + 
+  NULL
+g_all
+
+g = ggplot(neighbour_df, aes(x = embryo)) + 
+  geom_bar(aes(fill = celltype_mask, colour = celltype_mask), colour = "black", position = "fill") + 
+  theme_classic() +
+  scale_fill_manual(values = c(celltype_colours, "Other" = "grey"), aesthetics = c("fill", "colour")) +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  xlab("") + 
+  ylab("") + 
+  facet_grid(~subregion) +
+  scale_y_continuous(limits = c(0,1), expand = c(0.01,0.01)) +
+  NULL
+g
+ggsave(g, file = "../Figures/Mesenchyme_subclusters_neighbour_proportions.pdf",
+       height = 6, width = 4)
+
+g_all + g
+```
+
+# Violin plots of expression for given genes
+
+```{r}
+genes = c("Tbx18", "Wt1", "Msx1", "Msx2", "Id1", "Gata5", "Sfrp1", "Gata4", "Gata6", "Sfrp5",
+          "Flrt3","Shisa2")
+
+for (gene in genes) {
+mes_umap_df_gene = mes_umap_df_cluster
+
+if (gene %in% rownames(sce)) {
+  suffix = ""
+  mes_umap_df_gene$gene <- logcounts(sce)[gene,as.character(mes_umap_df_gene$uniqueID)]
+} else {
+  suffix = " (imputed)"
+  mes_umap_df_gene$gene <- imp[gene,as.character(mes_umap_df_gene$uniqueID)]  
+}
+
+g_vio = ggplot(mes_umap_df_gene,
+       aes(x = embryo, y = gene)) + 
+  geom_violin(aes(fill = cluster), scale = "width", draw_quantiles = 0.5) + 
+  theme_classic() +
+  facet_grid(~cluster) + 
+  scale_fill_manual(values = M_colours_2) +
+  ylab("Expression") +
+  guides(fill = guide_legend(title = "")) +
+  xlab("") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+    theme(strip.background = element_rect(colour = "white")) +
+  theme(strip.text = element_blank()) +
+  theme(legend.position = "none") +
+  NULL
+g_vio
+
+g_umap = ggplot(mes_umap_df_gene,
+                aes(x = UMAP1, y = UMAP2)) + 
+  geom_point(aes(colour = gene), size = 1) +
+  theme_classic() +
+  scale_colour_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                         midpoint = 0.5*max(mes_umap_df_gene$gene)) +
+  ylab("UMAP2") +
+  guides(colour = guide_colourbar(title = "")) +
+  xlab("UMAP1") +
+   theme(axis.text = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(legend.position = "none") +
+  coord_fixed() +
+  NULL
+g_umap
+g_umap + facet_grid(~embryo)
+
+g_space = ggplot(mes_umap_df_gene,
+                aes(x = x, y = -y)) + 
+  geom_point(data = data.frame(x = sce$x_global_affine, y = sce$y_global_affine, embryo = sce$embryo), colour = "lightgrey", size = 0.5) +
+  geom_point(aes(colour = gene)) +
+  theme_classic() +
+  facet_grid(~embryo) + 
+  scale_colour_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                         midpoint = 0.5*max(mes_umap_df_gene$gene)) +
+  guides(colour = guide_colourbar(title = "")) +
+  xlab("") +
+  ylab("") +
+  theme(legend.position = "none") +
+  coord_fixed() +
+  theme(axis.text = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(strip.background = element_rect(colour = "white")) +
+  theme(strip.text = element_blank()) +
+  add_scalebar() +
+  NULL
+g_space
+
+g = g_space + g_umap + g_vio + plot_layout(nrow = 1, widths = c(4,1,1.5))
+
+ggsave(g, file = paste0("../Figures/Mesenchyme_subclusters_expression_", gene,".pdf"),
+       height = 5, width = 15)
+}
+```
+
+# GO analysis of the mesenchyme cluster marker genes
+
+```{r}
+marker_genes_list = sapply(dimnames(marker_array)[[2]], function(x){
+  df = as.data.frame(marker_array[,x,])
+  genes = rownames(subset(df, FDR < 0.2 & LFC >= 0.2))
+  return(genes)
+}, simplify = FALSE)
+lapply(marker_genes_list, length)
+
+
+genesetGOtest = function(set, universe, termsList) {
+  # set is the character vector of genes in geneset
+  # universe is character vector of genes to include in universe
+  # termsList is a list of the pathways
+  
+  termsListfiltered = lapply(termsList, function(x) return(intersect(universe, x)))
+  keepForTesting = unlist(lapply(termsListfiltered, length)) >= 8 & unlist(lapply(termsListfiltered, length)) <= 500
+  
+  pval = sapply(1:length(termsList), function(i){
+    
+    if (!keepForTesting[i]) return(1)
+    
+    termGenes = termsListfiltered[[i]]
+    return(fisher.test(table(universe %in% set, universe %in% termGenes), alt = "g")$p.value)
+  })
+  names(pval) <- names(termsListfiltered)
+  return(pval)
+}
+
+GO_list = readRDS("../analysis_output/E8.5/GO_list.Rds")
+
+GO_list_sig = GO_list[unlist(lapply(GO_list, function(x) any(x %in% unlist(marker_genes_list))))]
+length(GO_list_sig)
+
+GO_testing_genes = marker_genes_list
+length(GO_testing_genes)
+head(names(GO_testing_genes))
+GO_res_list = lapply(GO_testing_genes, function(set){
+  genesetGOtest(set, rnames, GO_list_sig)
+})
+
+
+ntop = 20
+library(stringr)
+gList_GO = lapply(GO_res_list, function(pval) {
+  df = data.frame(term = factor(names(pval), levels = c(names(pval), "")),
+                  pval = pval,
+                  qval = p.adjust(pval, method = "BH"))
+  df$label = df$term
+  df$label[pval != 1] <- ""
+  df_sorted = sort_df(df, "pval")[1:ntop,]
+  df_sorted$term = factor(df_sorted$term, levels =  rev(df_sorted$term))
+  
+  g = ggplot(df_sorted, aes(x = term, y = -log10(pval), fill = qval < 0.05)) +
+    theme_classic() +
+    geom_col() +
+    coord_flip() +
+    xlab("") +
+    ylab(expression("-log10(P-value)")) +
+    # geom_hline(yintercept = -log10(0.01), colour = "red", linetype = "dashed", size = 1.2) +
+    scale_fill_manual(values = c("TRUE" = "dimgrey", "FALSE" = "peachpuff")) +
+    theme(legend.position = "none") +
+    theme(axis.text.y = element_text(size = 10)) +
+    theme(title = element_text(hjust = 0.5)) +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 30)) +
+    NULL
+  return(g)
+  
+})
+g = wrap_plots(sapply(names(gList_GO), function(x) gList_GO[[x]] + ggtitle(x), simplify = FALSE), nrow = 1)
+ggsave(g, file = "../Figures/Mesenchyme_subclusters_GO.pdf", height = 8, width = 30)
+gList_GO[[2]] + gList_GO[[3]]
+
+# dot plot of all terms
+GO_df = do.call(rbind, sapply(1:length(GO_res_list), function(i) {
+  pval = GO_res_list[[i]]
+  sample = paste0("cluster ",i)
+  if (i == 11) {
+    sample = "all"
+  }
+  df = data.frame(term = factor(names(pval), levels = c(names(pval), "")),
+                  pval = pval,
+                  qval = p.adjust(pval, method = "BH"))
+  df$label = df$term
+  df$label[pval != 1] <- ""
+  df_sorted = sort_df(df, "pval")#[1:ntop,]
+  df_sorted$rank = rank(df_sorted$pval)
+  df_sorted$term = factor(df_sorted$term, levels =  rev(df_sorted$term))
+  df_sorted$cluster = sample
+  return(df_sorted)
+}, simplify = FALSE))
+
+any_sig_terms = sort(unique(subset(GO_df, rank <= 20 & qval < 0.05 & cluster != "all")$term))
+length(any_sig_terms)
+
+GO_df_sub = subset(GO_df, term %in% any_sig_terms)
+
+GO_sub_raw = cast(GO_df_sub, term ~ cluster, value = "pval")
+GO_sub = -log10(as.matrix(GO_sub_raw[,-1]))
+colnames(GO_sub) <- colnames(GO_sub_raw)[2:ncol(GO_sub_raw)]
+rownames(GO_sub) <- GO_sub_raw[,1]
+
+order_terms = rownames(GO_sub)[hclust(dist(GO_sub))$order]
+order_clusters = colnames(GO_sub)[hclust(dist(t(GO_sub)))$order]
+
+GO_df_sub$term <- factor(GO_df_sub$term,
+                         levels = rev(order_terms))
+GO_df_sub$cluster <- factor(GO_df_sub$cluster,
+                         levels = order_clusters)
+
+g = ggplot(GO_df_sub, aes(x = cluster, y = term)) + 
+  geom_point(aes(size = -log10(pval), colour = qval < 0.05)) + 
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  scale_colour_manual(values = c("FALSE" = "grey", "TRUE" = "black"),
+                      labels = c("FDR-adjusted\nP-value > 0.05",
+                                 "FDR-adjusted\nP-value < 0.05")) +
+  guides(colour = guide_legend(title = "")) +
+  guides(size = guide_legend(title = "-log10(P-value)")) +
+  theme(legend.position = "right") +
+  xlab("") +
+  ylab("") +
+  NULL
+g
+ggsave(g, file = "../Figures/Mesenchyme_GO_heatmap.pdf",
+       height = 15, width = 10)
+
+bmp_genes = sort(unlist(GO_list_sig[names(GO_list_sig)[grepl("bmp", tolower(names(GO_list_sig)))]]))
+lapply(GO_testing_genes, function(x) intersect(x, bmp_genes))
+
+fgf_genes = sort(unlist(GO_list_sig[names(GO_list_sig)[grepl("fibroblast gro", tolower(names(GO_list_sig)))]]))
+lapply(GO_testing_genes, function(x) intersect(x, fgf_genes))
+
+
+cushion_genes = sort(unlist(GO_list_sig[names(GO_list_sig)[grepl("endocardial cushion formation", tolower(names(GO_list_sig)))]]))
+lapply(GO_testing_genes, function(x) intersect(x, cushion_genes))
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

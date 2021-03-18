@@ -1,0 +1,298 @@
+---
+title: "E8.5 smFISH - Generate counts matrix"
+author: "Shila Ghazanfar"
+date: "29/09/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 10 
+                     fig_height: 8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = TRUE,cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(ggplot2)
+library(pracma)
+require(rhdf5)
+```
+
+```{r}
+library(SpatialUtils)
+```
+
+Note that here i call objects by "lower" but there is just a single
+thresholding selection.
+
+# Directories
+
+```{r}
+segmentation_data_dir_embryo12 = "../Data/TimEmbryos-102219/segmentation/"
+fov_info_filename_embryo12 = "../Data/TimEmbryos-102219/output/cellinfo/fovinfo.csv"
+smFISH_lower_data_dir_embryo12 = "../Data/smFISH/calibrating/thresh_embryo12/"
+
+segmentation_data_dir_embryo3 = "../Data/TimEmbryos-120919/segmentation/"
+fov_info_filename_embryo3 = "../Data/TimEmbryos-120919/output/cellinfo/fovinfo.csv"
+smFISH_lower_data_dir_embryo3 = "../Data/smFISH/calibrating/thresh_embryo3/"
+```
+
+# Gene probe label
+
+```{r}
+gene_label_raw = read.delim("../Data/smFISH/channel_info/smFISH__gene_key__new.tab",
+                            row.names = 2, header = TRUE)
+gene_label = as.character(gene_label_raw$Gene)
+names(gene_label) <- rownames(gene_label_raw)
+gene_label
+```
+
+
+# Summary
+
+The easiest way to do this would be to grab the polygon segmentation and ask if 
+dots fall inside or outside these polygonalisations, but the polygons are 
+global transformed, this might actually become really finnicky and maybe even 
+incorrect. So instead I work with the dense segmentations.
+
+# Check what coordinate system the mRNA spot calls are in
+
+```{r}
+embryofiles = c("embryo12", "embryo3")
+
+pos_valuesList = list("embryo12" = as.character(0:50),
+                      "embryo3" = as.character(0:39))
+
+for (embryofile in embryofiles) {
+
+pos_values = pos_valuesList[[embryofile]]
+
+suffix = "_1_1__coords.tab"
+
+coords_list = sapply(pos_values[1:2],
+                     function(pos_value) {
+                         filename = paste0(get(paste0("smFISH_lower_data_dir_", embryofile)), pos_value, suffix)
+                         out = read.csv(filename, header = FALSE)
+                         colnames(out) <- c("x","y","z")
+                         out$pos = paste0("Pos",pos_value)
+                         return(out)
+                     }, 
+                     simplify = FALSE)
+coords = do.call(rbind, coords_list)
+
+ggplot(coords, aes(x = x, y = y, colour = pos)) + 
+    geom_point() + 
+    theme_classic() + 
+    NULL
+}
+```
+
+These are local coordinates. So we can match these smFISH dots to the 
+segmentation directly, no need to perform any affine transformations.
+
+# Function to extract all mRNA spot calls for each field of view
+
+```{r}
+gene_values = unique(
+    unlist(
+        lapply(
+            lapply(
+                strsplit(list.files(smFISH_lower_data_dir_embryo12, full.names = FALSE, pattern = "coords.tab"),
+                                                 "_"), "[", c(2,3)
+                ), paste0, collapse = "_")
+        )
+    )
+gene_values
+length(gene_values)
+
+extractSpotCalls = function(pos_value, data_dir) {
+    
+    print(pos_value)
+    
+    all_calls_list = sapply(gene_values,
+                            function(gene_value) {
+                                filenames = paste0(data_dir, pos_value, "_",
+                                                   gene_value, "_", c("_coords.tab",
+                                                                      "_intensity.tab",
+                                                                      "_sigma.tab"))
+                                
+                                if (!file.exists(filenames[1])) return(NULL)
+                                
+                                out = read.csv(filenames[1], header = FALSE)
+                                colnames(out) <- c("x","y","z")
+                                out$pos = paste0("Pos", pos_value)
+                                out$gene_value <- gene_value
+                                
+                                intensity = scan(file = filenames[2])
+                                out$intensity <- intensity
+                                
+                                sigma = scan(file = filenames[3])
+                                out$sigma <- sigma
+                                
+                                return(out)
+                            }, 
+                            simplify = FALSE)
+    
+    all_calls = do.call(rbind, all_calls_list)
+    
+    return(all_calls)
+}
+```
+
+
+```{r}
+all_calls_lower_embryo12 = do.call(
+    rbind, sapply(pos_valuesList[["embryo12"]], extractSpotCalls, data_dir = smFISH_lower_data_dir_embryo12, simplify = FALSE))
+
+all_calls_lower_embryo3 = do.call(
+    rbind, sapply(pos_valuesList[["embryo3"]], extractSpotCalls, data_dir = smFISH_lower_data_dir_embryo3, simplify = FALSE))
+```
+
+# Dense segmentation information 
+
+Take the h5 segmentation masks and assign a unique cell ID to the smFISH dots
+
+```{r}
+# manual
+embryo_label_12 = c(rep("embryo1", 29), rep("embryo2", 22))
+names(embryo_label_12) <- paste0("Pos", 0:50)
+
+embryo_label_3 = rep("embryo3", 40)
+names(embryo_label_3) <- paste0("Pos", 0:39)
+
+embryo_labelList = list("embryo12" = embryo_label_12,
+                        "embryo3" = embryo_label_3)
+```
+
+
+```{r}
+assignToSegmentsPixels = function(embryofile,
+                                  spot_calls,
+                                  segmentation_data_dir) {
+    
+    require(rhdf5)
+    
+    spot_calls$x_pixel = round(spot_calls$x/4)
+    spot_calls$y_pixel = round(spot_calls$y/4)
+    spot_calls$cellID = NA
+    
+    pos_values = pos_valuesList[[embryofile]]
+    
+    for (pos_value in paste0("Pos", pos_values)) {
+        
+        print(pos_value)
+        
+        for (z_value in c(2,5)) {
+            print(z_value)
+            
+            h5_file = paste0(segmentation_data_dir, "boundaryseg_", pos_value,
+                             "-000",z_value,"_Multicut Segmentation.h5")
+            
+            file.exists(h5_file)
+            
+            data_name = h5ls(h5_file)$name
+            data = h5read(file = h5_file, data_name)
+            
+            all_calls_sub_ind = spot_calls$z == z_value & spot_calls$pos == pos_value
+            table(all_calls_sub_ind)
+            
+            x_pixel = spot_calls[all_calls_sub_ind, "x_pixel"]
+            y_pixel = spot_calls[all_calls_sub_ind, "y_pixel"]
+            
+            cellID = sapply(seq_len(length(x_pixel)), function(i) data[x_pixel[i],y_pixel[i],1])
+            
+            spot_calls[all_calls_sub_ind,"cellID"] <- cellID
+            
+        }
+    }
+    
+    # after loop
+    uniqueID <- paste0(paste0(embryo_labelList[[embryofile]][spot_calls$pos],"_",spot_calls$pos,"_cell",spot_calls$cellID,"_z",spot_calls$z))
+    
+    spot_calls$uniqueID <- uniqueID
+    
+    return(spot_calls)
+    
+}
+```
+
+```{r}
+all_calls_lower_embryo12 <- assignToSegmentsPixels(
+    embryofile = "embryo12", 
+    spot_calls = all_calls_lower_embryo12,
+    segmentation_data_dir = segmentation_data_dir_embryo12)
+
+all_calls_lower_embryo3 <- assignToSegmentsPixels(
+    embryofile = "embryo3", 
+    spot_calls = all_calls_lower_embryo3,
+    segmentation_data_dir = segmentation_data_dir_embryo3)
+
+all_calls_lower_embryo12 = subset(all_calls_lower_embryo12, !is.na(cellID))
+all_calls_lower_embryo3 = subset(all_calls_lower_embryo3, !is.na(cellID))
+```
+
+# Generate gene expression matrices of only the smFISH genes
+
+```{r}
+all_cells = sort(unique(c(as.character(all_calls_lower_embryo12[,"uniqueID"]),
+                          as.character(all_calls_lower_embryo3[,"uniqueID"]))))
+length(all_cells)
+
+all_calls_lower = rbind(all_calls_lower_embryo12, all_calls_lower_embryo3)
+
+all_calls_lower$gene_value_name = gene_label[as.character(all_calls_lower$gene_value)]
+
+dim(all_calls_lower)
+
+table(all_calls_lower$gene_value_name)
+```
+
+```{r}
+buildSMFISHExpressionMatrix = function(spot_calls, all_cells, geneID = "gene_value") {
+    # spot_calls is a dataframe with each mRNA spot called
+    # all_cells is a character vector of the cells of interest
+    # geneID is the column to pull out the gene information
+    
+    require(reshape)
+    
+    spot_calls <- subset(spot_calls, uniqueID %in% all_cells)
+    spot_calls$uniqueID <- factor(spot_calls$uniqueID, levels = all_cells)
+    
+    mat = tapply(spot_calls[,1],list(spot_calls[,geneID],
+                                     spot_calls$uniqueID),
+                 function(x)length(x),
+                 default = 0)
+    
+    return(mat)
+}
+```
+
+```{r}
+smFISH_lower = buildSMFISHExpressionMatrix(all_calls_lower,
+                                           all_cells = all_cells,
+                                           geneID = "gene_value_name")
+dim(smFISH_lower)
+smFISH_lower[1:5,1:5]
+```
+
+Save the output
+
+```{r}
+saveRDS(smFISH_lower, file = "../analysis_output/smFISH_counts.Rds")
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

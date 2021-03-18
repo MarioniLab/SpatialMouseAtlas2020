@@ -1,0 +1,659 @@
+---
+title: "E8.5 seqFISH - Gut tube analysis using Nowotschin et al data"
+author: "Shila Ghazanfar"
+date: "24/07/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 16
+                     fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = FALSE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+```
+
+```{r}
+library(SpatialUtils)
+```
+
+```{r}
+na_colour = "white"
+polygon_size = 0.1
+polygon_colour = "black"
+```
+
+# Summary
+
+Here we want to generate cell labels for the spatial data - especially the gut
+tube cells - that are informed by the Nowotschin dataset. This dataset is 
+interesting because they look deeply at formation of the gut tube, and they 
+generate this AP-axis pseudospace. We want to see if we observe a similar 
+composition of cells along this axis.
+
+The metadata is based on panel a of this Extended Data Figure from the paper:
+![Figure](../Data/Nowotschin/raw/ExtendedDataFigure9.png)
+
+# Clean the metadata
+
+Here we want to take the cells that have these pseudospace labels and perform
+some downstream analysis.
+
+Read what's in the readme file in the directory.
+
+```{r}
+cat(readLines("../Data/Nowotschin/raw/readme.txt"))
+```
+
+```{r}
+# aim to add two columns to the cell metadata which corresponds to the
+# groups down in Extended data Fig 9, as well as DE and VE class
+
+# Restrict only to the E8.75 cells (set all others to NA)
+# merge the "Gut tube:DE" and "Gut tube:VE" categories
+# keep the DE/VE classification as a separate column
+
+df = read.csv("../Data/Nowotschin/raw/sc_endoderm_all_cells_metadata.csv",
+              header = TRUE, row.names = 1)
+
+dim(df)
+
+# this is done manually, by looking at the Extended Data Figure 
+clusterGroups = c(
+  "10" = "Thyroid",
+  "0" = "Thymus",
+  "7" = "Lung 1",
+  "8" = "Lung 2",
+  "9" = "Liver",
+  "3" = "Pancreas 1",
+  "4" = "Pancreas 2",
+  "2" = "Small intestine",
+  "6" = "Large intestine/Colon"
+)
+
+# viridis hard to distinguish
+# AP_pseudo_colours = scales::viridis_pal()(length(clusterGroups))
+AP_pseudo_colours = RColorBrewer::brewer.pal(length(clusterGroups), "Set3")
+names(AP_pseudo_colours) <- clusterGroups
+plot(1:length(clusterGroups), col = AP_pseudo_colours, pch = 16, cex = 5)
+AP_pseudo_colours["None"] <- "white"
+
+AP_endoderm_colours = RColorBrewer::brewer.pal(3, "Set1")[1:2]
+names(AP_endoderm_colours) <- c("DE","VE")
+
+# get the cleaned cluster
+df$Cluster_clean <- gsub(" ", "", unlist(lapply(strsplit(as.character(df$Cluster), ":"), "[", 2)))
+
+# remove the DE/VE from the cell type - not particularly necessary
+# df$CellType_merge = gsub(":DE|:VE","",  as.character(df$CellType))
+
+df[,"AP_pseudo"] <- clusterGroups[df$Cluster_clean]
+
+df$AP_endoderm = unlist(lapply(strsplit(
+  as.character(df$CellType), ":"), function(x) {
+    if (length(x) < 2) {
+      return(NA)
+    } else {
+      return(x[2])
+    }
+  }))
+
+# everything that is not E8.75 set to NA
+df[df$Timepoint != "E8.75","AP_pseudo"] <- NA
+
+# everything that is not either DE or VE set to NA
+df[is.na(df$AP_endoderm), "AP_pseudo"] <- NA
+
+addmargins(table(df$AP_pseudo, df$AP_endoderm))
+
+head(df)
+```
+
+# Load Nowotschin counts
+
+```{r}
+counts_file = "../Data/Nowotschin/processed/counts.Rds"
+
+if (!file.exists(counts_file)) {
+  dat = read.csv("../Data/Nowotschin/raw/sc_endoderm_all_cells_counts.csv",
+                 row.names = 1, header = TRUE)
+  mat = as.matrix(dat)
+  dat_sp = Matrix(mat, sparse = TRUE)
+  saveRDS(dat_sp, file = counts_file)
+} else {
+  dat_sp = readRDS(counts_file)
+}
+```
+
+Generate SingleCellExperiment object
+
+```{r}
+sce_now_raw = SingleCellExperiment(
+  assays = list(counts = t(dat_sp)),
+  colData = DataFrame(df))
+```
+
+# Load spatial data
+
+And automated cell type annotation.
+
+```{r}
+sce = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+sce <- reNormalise(sce)
+sce
+
+mapping_dt = readRDS("../analysis_output/E8.5/celltype_annotation_refined.Rds")
+colData(sce) <- cbind(colData(sce), mapping_dt[colnames(sce), setdiff(colnames(mapping_dt),colnames(colData(sce)))])
+```
+
+Used locator to virtually dissect gut tubes
+
+```{r}
+# virtually dissected regions corresponding to foregut
+# and dorsal foregut
+# using locator()
+if (FALSE) { # run once only
+  gut_selection = list(
+    
+    foregut = list(embryo1 = foregut_1,
+                   embryo2 = foregut_2,
+                   embryo3 = foregut_3),
+    
+    dorsal_foregut = list(embryo1 = dorsal_gut_1,
+                          embryo2 = dorsal_gut_2,
+                          embryo3 = dorsal_gut_3)
+  )
+  saveRDS(gut_selection, file = "../analysis_output/E8.5/gut_virtual_dissection.Rds")
+}
+
+```
+
+
+```{r}
+gut_tube_celltypes = c("Gut", # old name
+                       "Gut tube",
+                       "Pharyngeal mesoderm", # old name
+                       "Splanchnic mesoderm",
+                       "Paraxial mesoderm", # more defined
+                       "Def. endoderm",
+                       "ExE endoderm",
+                       "Parietal endoderm",
+                       "Visceral endoderm",
+                       "Cranial mesoderm",
+                       "Anterior somitic tissues",
+                       "Sclerotome",
+                       "Dermomyotome")
+
+cbind(gut_tube_celltypes, gut_tube_celltypes %in% sce$celltype_mapped_refined)
+```
+
+Subset to relevant cell types, using Tim's suggestion:
+"Gut (Gut tube) / Pharyngeal mesoderm / paraxial mesoderm / definitive endoderm, ExE endoderm
+Parietal endoderm Visceral endoderm
+The mesoderm population are lining the gut tube, that is why I included them"
+
+From later on I think also surface ectoderm should be included with this group.
+
+# Subset and batch correction of Nowotschin data
+
+Subset down to the E8.75, find out how many cell types they actually include, 
+also figure out if we want to keep the other E8.75 samples. Batch correct them
+using the sample information we have (need to pull from the cell names).
+
+```{r}
+head(colData(sce_now_raw))
+sce_now_raw$Sample <- gsub("_.*", "", colnames(sce_now_raw))
+table(sce_now_raw$Sample)
+table(sce_now_raw$Sample, sce_now_raw$AP_pseudo, useNA = "always")
+```
+
+Restrict down to the samples that contribute to the pseudospace.
+
+```{r}
+now_samplesToKeep = unique(colData(sce_now_raw)[!is.na(sce_now_raw$AP_pseudo),"Sample"])
+now_samplesToKeep
+
+sce_now = sce_now_raw[, sce_now_raw$Sample %in% now_samplesToKeep]
+sce_now
+```
+
+Restrict to genes that are in seqFISH data, fix gene names as needed.
+[Cavin3](http://www.informatics.jax.org/marker/MGI:1923422)
+[Nkx1-2](http://www.informatics.jax.org/marker/MGI:104806)
+[Nkx2-3](http://www.informatics.jax.org/marker/MGI:97348)
+
+```{r}
+table(rownames(sce) %in% rownames(sce_now))
+setdiff(rownames(sce), rownames(sce_now))
+
+rownames(sce_now)[rownames(sce_now) == "Prkcdbp"] <- "Cavin3"
+rownames(sce_now)[rownames(sce_now) == "Nkx1.2"] <- "Nkx1-2"
+rownames(sce_now)[rownames(sce_now) == "Nkx2.3"] <- "Nkx2-3"
+
+table(rownames(sce) %in% rownames(sce_now))
+setdiff(rownames(sce), rownames(sce_now))
+```
+
+# Add 10x gastrulation atlas data
+
+```{r}
+atlas_sub = readRDS("../analysis_output/E8.5/atlas_sub.Rds")
+```
+
+# Joint mapping of Nowotschin and spatial data
+
+Samples provided manually. To avoid
+sex specific effects, remove Xist from the PCA calculation step.
+
+```{r}
+sce_now_sub <- sce_now[rownames(sce_now) %in% rownames(sce),]
+sce_now_sub <- logNormCounts(sce_now_sub)
+
+assay(sce_now_sub, "cosineNorm") <- cosineNorm(logcounts(sce_now_sub))
+```
+
+# Perform HVG gene selection of Nowotschin data
+
+Only for those with labels
+
+```{r}
+sce_now <- logNormCounts(sce_now)
+stats = modelGeneVar(sce_now[,!is.na(sce_now$AP_pseudo)], block = sce_now[,!is.na(sce_now$AP_pseudo)]$Sample)
+hvgs_all = getTopHVGs(stats, fdr.threshold = 0.05) # more stringent
+hvgs = intersect(hvgs_all, rownames(sce))
+```
+
+# Make a joint Nowotschin and atlas SingleCellExperiment object
+
+Integrate all three datasets, ensuring that merge order is used to 
+map atlas batches (ordered by total number of cells), then Nowotschin batches,
+then the spatial field of view batches.
+
+```{r}
+atlas_now_sce = SingleCellExperiment(
+  assays = list(
+    logcounts = cbind(assay(atlas_sub, "logcounts")[hvgs,],
+                      assay(sce_now_sub, "logcounts")[hvgs,]
+    )
+  )
+)
+atlas_now_sce$Sample = c(atlas_sub$sample, sce_now_sub$Sample)
+atlas_now_sce
+
+atlas_now_sce$AP_pseudo = colData(sce_now_sub)[colnames(atlas_now_sce),"AP_pseudo"]
+atlas_now_sce$AP_pseudo[is.na(atlas_now_sce$AP_pseudo) & colnames(atlas_now_sce) %in% colnames(sce_now_sub)] <- "Other"
+```
+
+# Get joint PC space for atlas, Nowotschin, and spatial data
+
+```{r}
+atlas = atlas_now_sce
+spatial = sce
+assayNameAtlas = "logcounts"
+assayNameSpatial = "logcounts"
+inc_z = TRUE
+atlas_batch = "Sample"
+spatial_batch = c("embryo", "pos", "z")
+irlba = FALSE # if this is FALSE, then multibatchPCA
+
+all_assay = cbind(assay(spatial, assayNameSpatial)[hvgs,],
+                  assay(atlas, assayNameAtlas)[hvgs,])
+
+if (!inc_z) {
+  spatial_batch <- setdiff(spatial_batch, "z")
+}
+
+spatial_batchFactor = do.call(interaction, 
+                              sapply(spatial_batch, function(x) 
+                                colData(spatial)[,x], simplify = FALSE))
+
+atlas_batchFactor = do.call(interaction, 
+                            sapply(atlas_batch, function(x) 
+                              colData(atlas)[,x], simplify = FALSE))
+
+# make sure the levels of the atlas batchFactor are first
+batchFactor = factor(c(as.character(spatial_batchFactor),
+                       as.character(atlas_batchFactor)),
+                     levels = c(sort(unique(as.character(atlas_batchFactor))),
+                                sort(unique(as.character(spatial_batchFactor)))))
+print(table(batchFactor))
+levels(batchFactor)
+
+# set the merge order
+# merge the four atlas groups (ordered by number of cells)
+# then the four nowtoschin batches
+# then each field of view with the previous
+
+# MANUALLY CODED
+merge.ordering = unlist(list(list(list(2, 3, 1, 4), list(8, 6, 7, 5)), as.list(9:length(levels(batchFactor)))), recursive = FALSE)
+
+if (FALSE) {
+  mbpca = multiBatchPCA(all_assay,
+                        batch = batchFactor,
+                        subset.row = !(rownames(all_assay) %in% "Xist"),
+                        d = 50
+                      
+  )
+  
+  print("done multibatch PCA")
+  
+  dim(mbpca[[1]])
+  out = do.call(reducedMNN, mbpca)
+  
+  print("done batch correction")
+  
+  joint_mnn_pca = out$corrected
+  
+}
+
+if (!irlba) {
+  out = fastMNN(all_assay,
+                batch = batchFactor,
+                subset.row = !(rownames(all_assay) %in% "Xist"),
+                d = 50,
+                merge.order = merge.ordering)
+  
+  print(head(out@metadata$merge.info))
+  
+  joint_mnn_pca <- reducedDim(out, "corrected")
+} else {
+  
+  pca_all <- irlba::prcomp_irlba(t(all_assay), n = 50)$x
+  rownames(pca_all) <- colnames(all_assay)
+  
+  out = reducedMNN(pca_all,
+                   batch = batchFactor,
+                   # subset.row = !(rownames(all_assay) %in% "Xist"),
+                   # d = 50,
+                   merge.order = merge.ordering)
+  
+  joint_mnn_pca <- out$corrected
+  
+}
+
+saveRDS(joint_mnn_pca, file = "../analysis_output/E8.5/atlas_nowotschin_joint_mnn_pca.Rds")
+
+joint_mnn_umap = calculateUMAP(joint_mnn_pca, transposed = TRUE)
+rownames(joint_mnn_umap) <- rownames(joint_mnn_pca)
+
+plot(joint_mnn_umap)
+saveRDS(joint_mnn_umap, file = "../analysis_output/E8.5/atlas_nowotschin_joint_mnn_umap.Rds")
+
+plot(joint_mnn_umap, col = factor(substring(rownames(joint_mnn_umap),1,1)), pch = 16, cex = 0.5)
+
+ap = as.character(sce_now_sub$AP_pseudo)
+names(ap) <- colnames(sce_now_sub)
+
+plot(joint_mnn_umap, col = AP_pseudo_colours[ap[rownames(joint_mnn_umap)]],
+     pch = 16, cex = 0.5)
+
+joint_mnn_umap_now_spatial = joint_mnn_umap[c(colnames(sce), colnames(sce_now_sub)),]
+```
+
+# Get joint PC space for Nowotschin and spatial data
+
+```{r}
+atlas = sce_now_sub
+spatial = sce
+assayNameAtlas = "logcounts"
+assayNameSpatial = "logcounts"
+inc_z = TRUE
+atlas_batch = "Sample"
+spatial_batch = c("embryo", "pos","z")
+irlba = FALSE # if this is FALSE, then multibatchPCA
+
+all_assay = cbind(assay(spatial, assayNameSpatial)[hvgs,],
+                  assay(atlas, assayNameAtlas)[hvgs,])
+
+if (!inc_z) {
+  spatial_batch <- setdiff(spatial_batch, "z")
+}
+
+spatial_batchFactor = do.call(interaction, 
+                              sapply(spatial_batch, function(x) 
+                                colData(spatial)[,x], simplify = FALSE))
+
+atlas_batchFactor = do.call(interaction, 
+                            sapply(atlas_batch, function(x) 
+                              colData(atlas)[,x], simplify = FALSE))
+
+# make sure the levels of the atlas batchFactor are first
+batchFactor = factor(c(as.character(spatial_batchFactor),
+                       as.character(atlas_batchFactor)),
+                     levels = c(sort(unique(as.character(atlas_batchFactor))),
+                                sort(unique(as.character(spatial_batchFactor)))))
+print(table(batchFactor))
+levels(batchFactor)
+
+# set the merge order
+# merge the four atlas groups (ordered by number of cells)
+# then the four nowtoschin batches
+# then each field of view with the previous
+
+# MANUALLY CODED
+merge.ordering = unlist(list(list(list(4, 2, 3, 1)), as.list(5:length(levels(batchFactor)))), recursive = FALSE)
+
+if (!irlba) {
+  out = fastMNN(all_assay,
+                batch = batchFactor,
+                subset.row = !(rownames(all_assay) %in% "Xist"),
+                d = 50,
+                merge.order = merge.ordering)
+  
+  print(head(out@metadata$merge.info))
+  
+  joint_mnn_pca_now <- reducedDim(out, "corrected")
+} else {
+  
+  pca_all <- irlba::prcomp_irlba(t(all_assay), n = 50)$x
+  rownames(pca_all) <- colnames(all_assay)
+  
+  out = reducedMNN(pca_all,
+                   batch = batchFactor,
+                   # subset.row = !(rownames(all_assay) %in% "Xist"),
+                   # d = 50,
+                   merge.order = merge.ordering)
+  
+  joint_mnn_pca_now <- out$corrected
+  
+}
+
+saveRDS(joint_mnn_pca_now, file = "../analysis_output/E8.5/nowotschin_joint_mnn_pca.Rds")
+
+joint_mnn_umap_now = calculateUMAP(joint_mnn_pca_now, transposed = TRUE)
+rownames(joint_mnn_umap_now) <- rownames(joint_mnn_pca_now)
+
+plot(joint_mnn_umap_now)
+saveRDS(joint_mnn_umap_now, file = "../analysis_output/E8.5/nowotschin_joint_mnn_umap.Rds")
+
+plot(joint_mnn_umap_now, col = factor(substring(rownames(joint_mnn_umap_now),1,1)), pch = 16, cex = 0.5)
+
+ap = as.character(sce_now_sub$AP_pseudo)
+names(ap) <- colnames(sce_now_sub)
+
+plot(joint_mnn_umap_now, col = AP_pseudo_colours[ap[rownames(joint_mnn_umap_now)]],
+     pch = 16, cex = 0.5)
+
+joint_mnn_umap_now_spatial = joint_mnn_umap_now[c(colnames(sce), colnames(sce_now_sub)),]
+```
+
+# Predict AP axis using nowotschin and spatial data
+
+```{r}
+# calculate labels for only labelled Nowotschin
+knns = BiocNeighbors::queryKNN(
+  joint_mnn_pca_now[colnames(sce_now_sub[,!is.na(sce_now_sub$AP_pseudo)]),],
+  joint_mnn_pca_now[colnames(sce),],
+  k = 10, get.index = TRUE, get.distance = FALSE)
+
+# calculate knns for all Nowotschin
+knns_all = BiocNeighbors::queryKNN(
+  joint_mnn_pca_now[colnames(sce_now_sub),],
+  joint_mnn_pca_now[colnames(sce),],
+  k = 10, get.index = TRUE, get.distance = FALSE)
+
+k.mapped_all = vectorSubset(colnames(sce_now_sub), knns_all$index)
+rownames(k.mapped_all) <- colnames(sce)
+saveRDS(k.mapped_all, "../analysis_output/E8.5/E8.5_Nowotschin_naive_k.mapped_all_libsize.Rds")
+
+k.mapped = vectorSubset(colnames(sce_now_sub[,!is.na(sce_now_sub$AP_pseudo)]), knns$index)
+rownames(k.mapped) <- colnames(sce)
+saveRDS(k.mapped, "../analysis_output/E8.5/E8.5_Nowotschin_naive_k.mapped_libsize.Rds")
+
+predmat_all = vectorMatch(!is.na(sce_now_sub$AP_pseudo), k.mapped_all, colnames(sce_now_sub))
+pred_prop = rowMeans(predmat_all)
+
+predmat = vectorMatch(sce_now_sub$AP_pseudo, k.mapped_all, colnames(sce_now_sub))
+knn_out = get_MVS_vals(predmat)
+knn_out <- cbind(knn_out, "prop_labelled" = pred_prop)
+saveRDS(knn_out, "../analysis_output/E8.5/E8.5_Nowotschin_naive_pred_knn_libsize.Rds")
+
+predmat_endo = vectorMatch(sce_now_sub$AP_endoderm, k.mapped_all, colnames(sce_now_sub))
+knn_out_endo = get_MVS_vals(predmat_endo)
+knn_out_endo <- cbind(knn_out_endo, "prop_labelled" = pred_prop)
+saveRDS(knn_out_endo, "../analysis_output/E8.5/E8.5_Nowotschin_naive_pred_endo_knn_libsize.Rds")
+```
+
+# Get a joint PCA and metadata representation
+
+```{r}
+pred_knn_joint_unsorted = c(as.character(knn_out[,"celltype_mapped"]), as.character(sce_now_sub$AP_pseudo))
+names(pred_knn_joint_unsorted) <- c(rownames(knn_out), colnames(sce_now_sub))
+
+pred_knn_conf_joint_unsorted = c(as.numeric(knn_out[,"mapping_score"]), rep(1,ncol(sce_now_sub)))
+names(pred_knn_conf_joint_unsorted) <- c(rownames(knn_out), colnames(sce_now_sub))
+
+pred_knn_confany_joint_unsorted = c(pred_prop, rep(ifelse(is.na(sce_now_sub$AP_pseudo),0,1)))
+names(pred_knn_confany_joint_unsorted) <- c(rownames(knn_out), colnames(sce_now_sub))
+
+joint_df = data.frame(
+  umap1 = joint_mnn_umap_now[,1],
+  umap2 = joint_mnn_umap_now[,2],
+  ctype = pred_knn_joint_unsorted[rownames(joint_mnn_umap_now)],
+  type = ifelse(substring(rownames(joint_mnn_umap_now),1,1) == "e", "seqFISH", "Nowotschin"),
+  conf = pred_knn_conf_joint_unsorted[rownames(joint_mnn_umap_now)],
+  confany = pred_knn_confany_joint_unsorted[rownames(joint_mnn_umap_now)]
+)
+g0 = ggplot(
+  joint_df, aes(x = umap1, y = umap2)) +
+  geom_point(aes(colour = type), size = 1) +
+  scale_colour_manual(values = c("seqFISH" = "red", "Nowotschin" = "black")) +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  NULL
+g0
+
+joint_df$type_lab = as.character(joint_df$type)
+joint_df$type_lab[is.na(joint_df$ctype) & joint_df$type == "Nowotschin"] <- "Nowotschin_other"
+joint_df$type_lab <- factor(joint_df$type_lab)
+
+g = ggplot(
+  joint_df, aes(x = umap1, y = umap2)) +
+  geom_point(aes(colour = type_lab), size = 1) +
+  scale_colour_manual(values = c("seqFISH" = "red", "Nowotschin" = "black", "Nowotschin_other" = "lightgrey")) +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  NULL
+g
+
+joint_df$celltype <- colData(sce)[rownames(joint_df), "celltype_mapped_refined"]
+
+g = ggplot(
+  joint_df, aes(x = umap1, y = umap2)) +
+  geom_point(aes(colour = ctype), size = 1) + 
+  scale_colour_manual(values = AP_pseudo_colours, na.value = "black") +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  NULL
+g + facet_wrap(~type) + plot_layout(nrow = 1)
+
+g + facet_grid(I(celltype %in% c(gut_tube_celltypes, "Surface ectoderm")) ~ type)
+
+g = ggplot(
+  joint_df, aes(x = umap1, y = umap2)) +
+  geom_point(aes(colour = celltype), size = 1) + 
+  scale_colour_manual(values = celltype_colours, na.value = "black") +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  NULL
+g + facet_wrap(~type) + plot_layout(nrow = 1)
+g + facet_grid(I(confany > 0.25) ~ type)
+```
+
+```{r}
+joint_df$ctype_mask = joint_df$ctype
+joint_df$ctype_mask[joint_df$type == "seqFISH" & 
+                      # joint_df$confany < 0.25 & 
+                      # !joint_df$celltype %in% gut_tube_celltypes 
+                      !joint_df$celltype %in% c("Gut tube", "Surface ectoderm") 
+                    ] <- NA
+```
+
+```{r}
+coord_x_named = c(sce$x_global_affine, rep(NA, ncol(sce_now_sub)))
+names(coord_x_named) <- c(colnames(sce), colnames(sce_now_sub))
+coord_y_named = c(-sce$y_global_affine, rep(NA, ncol(sce_now_sub)))
+names(coord_y_named) <- c(colnames(sce), colnames(sce_now_sub))
+split = c(paste0(sce$embryo, sce$z), rep("Nowotschin", ncol(sce_now_sub)))
+names(split) <- c(colnames(sce), colnames(sce_now_sub))
+
+joint_df$coord_x = coord_x_named[rownames(joint_df)]
+joint_df$coord_y = coord_y_named[rownames(joint_df)]
+joint_df$split = split[rownames(joint_df)]
+
+g = ggplot(
+  joint_df, aes(x = coord_x, y = coord_y)) +
+  geom_point(aes(colour = ctype_mask), size = 0.2) +
+  scale_colour_manual(values = AP_pseudo_colours) +
+  # scale_colour_manual(values = c("TRUE" = "black", "FALSE" = "lightgrey")) +
+  theme_classic() +
+  theme(legend.position = "right") +
+  coord_fixed() +
+  NULL
+g + facet_wrap(~split)
+```
+
+```{r}
+saveRDS(joint_df, file = "../analysis_output/E8.5/E8.5_Nowotschin_joint_mnn_df.Rds")
+saveRDS(sce_now_raw, file = "../Data/Nowotschin/processed/Nowotschin_sce.Rds")
+saveRDS(sce_now_sub, file = "../Data/Nowotschin/processed/Nowotschin_sce_sub.Rds")
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

@@ -54,10 +54,7 @@ library(ggpubr)
 Load spatial and segmentation functions.
 
 ```{r}
-source("spatial_functions.R")
-source("segmentation_functions.R")
-source("celltype_colours.R")
-source("neighbourSegments.R")
+library(SpatialUtils)
 ```
 
 # Load mRNA data and merge
@@ -217,7 +214,6 @@ x_global_segments_affine_rotated = x_global_segments_affine
 y_global_segments_affine_rotated = y_global_segments_affine
 
 # a list of dataframes
-# global_segments = sapply(names(y_global_segments), function(n) {
 
 for (n in names(y_global_segments)) {
   
@@ -272,9 +268,6 @@ out = rotateDF(df_global_scaled_centred_flipped, x = "x", y = "y", ang = angles)
 
 mRNA_df$x_global_affine <- out$x
 mRNA_df$y_global_affine <- out$y
-
-# mRNA_df$x_global_affine <- mRNA_x_global_affine
-# mRNA_df$y_global_affine <- mRNA_y_global_affine
 ```
 
 # Graph using boundaries

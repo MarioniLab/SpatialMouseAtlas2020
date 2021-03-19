@@ -1,0 +1,339 @@
+---
+title: "E8.5 seqFISH - Downstream mesoderm analysis using Han et al Data"
+author: "Shila Ghazanfar"
+date: "17/08/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 16
+                     fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = FALSE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+library(RColorBrewer)
+```
+
+```{r}
+library(SpatialUtils)
+```
+
+```{r}
+na_colour = "white"
+polygon_size = 0.1
+polygon_colour = "black"
+```
+
+# Summary
+
+Here we examine the mesodermal layers that are around the gut tube, and see
+how they relate in terms of their gene expression patterns in space.
+
+# Load spatial data
+
+```{r}
+sce = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+sce
+sce <- reNormalise(sce)
+```
+
+# Add cell type and clustering information
+
+```{r}
+mapping_dt = readRDS("../analysis_output/E8.5/celltype_annotation_refined.Rds")
+colData(sce) <- cbind(colData(sce), mapping_dt[colnames(sce), setdiff(colnames(mapping_dt),colnames(colData(sce)))])
+```
+
+# Also add Nowotschin annotation
+
+```{r}
+now_joint_df = readRDS("../analysis_output/E8.5/E8.5_Nowotschin_joint_mnn_df.Rds")
+sce$gut_tube_subtype = now_joint_df[colnames(sce), "ctype"]
+colData(sce)[sce$celltype_mapped_refined != "Gut tube","gut_tube_subtype"] <- NA
+```
+
+# And Han annotation
+
+Only for those cell types listed
+
+```{r}
+meso_types = c("Anterior somitic tissues",
+               "Cardiomyocytes",
+               "Cranial mesoderm",
+               "Endothelium",
+               "Gut tube",
+               "Mesenchyme",
+               "Splanchnic mesoderm",
+               "Sclerotome")
+
+han_joint_df = readRDS("../analysis_output/E8.5/E8.5_Han_joint_mnn_df.Rds")
+sce$han_subtype = han_joint_df[colnames(sce), "ctype"]
+colData(sce)[!sce$celltype_mapped_refined %in% meso_types,"han_subtype"] <- NA
+```
+
+# Add cell neighbourhood
+
+```{r}
+graph = readRDS("../analysis_output/E8.5/E8.5_neighbourGraph_1.3.Rds")
+```
+
+# expand network to the gut tube cells
+
+```{r}
+gut_tube_cells = colnames(sce)[sce$celltype_mapped_refined == "Gut tube"]
+
+expanded_vertices_list = neighborhood(graph, order = 3, nodes = which(V(graph)$name %in% gut_tube_cells))
+expanded_vertices = sort(unique(unlist(lapply(expanded_vertices_list, function(x) x$name))))
+length(expanded_vertices)
+length(setdiff(expanded_vertices, gut_tube_cells))
+nearby_meso_cells = intersect(expanded_vertices, colnames(sce)[sce$celltype_mapped_refined %in% setdiff(meso_types, "Gut tube")])
+length(nearby_meso_cells)
+
+sort(table(colData(sce)[nearby_meso_cells, "celltype_mapped_refined"], useNA = "always"))
+sort(table(colData(sce)[nearby_meso_cells, "gut_tube_subtype"], useNA = "always"))
+sort(table(colData(sce)[nearby_meso_cells, "han_subtype"], useNA = "always"))
+```
+
+# plot these nearby cells' Han labels
+
+```{r}
+colourCount = length(unique(han_joint_df$ctype))
+getPalette = colorRampPalette(RColorBrewer::brewer.pal(12, "Accent"))
+han_cols = getPalette(colourCount)
+names(han_cols) = levels(han_joint_df$ctype)
+```
+
+Figure panel for MS:
+
+```{r}
+sce$han_subtype_mask = sce$han_subtype
+sce$han_subtype_mask[!colnames(sce) %in% nearby_meso_cells] <- NA
+sce$han_subtype_mask[substring(sce$han_subtype_mask,1,1) == "E"] <- NA
+
+g = ggplot(as.data.frame(colData(sce)), aes(x = x_global_affine, y = -y_global_affine)) + 
+  geom_point(aes(colour = han_subtype_mask), size = 0.5) + 
+  facet_wrap(z ~ embryo) +
+  theme_classic() +
+  scale_colour_manual(values = han_cols, na.value = "lightgrey") + 
+  guides(colour = guide_legend(title = "", override.aes = list(size = 5))) +
+  coord_fixed() +
+  NULL
+g
+
+# make graph just for embryo1 z 2 
+
+bdf = getSegmentationVerticesDF(colData(sce),
+                                othercols = c("uniqueID", "z", "embryo", "han_subtype_mask"))
+
+g = ggplot(
+  subset(bdf, embryo == "embryo1" & z == 2), 
+           aes(x = segmentation_vertices_x_global, y = -segmentation_vertices_y_global)) +
+  geom_polygon(aes(group = uniqueID, fill = han_subtype_mask),
+               colour = "black", size = 0.1) + 
+  theme_classic() +
+  scale_fill_manual(values = han_cols, na.value = "lightgrey") + 
+  guides(fill = guide_legend(title = "", override.aes = list(size = 5))) +
+  coord_fixed() +
+  xlab("") + 
+  ylab("") +
+  theme(axis.line = element_blank()) + 
+  theme(axis.text = element_blank()) + 
+  theme(axis.ticks = element_blank()) + 
+  NULL
+
+ggsave(g + theme(legend.position = "none"),
+       file = "../Figures/Han_mesodermal_embryo1.pdf", height = 10, width = 8)
+
+gg = as_ggplot(get_legend(g + theme(legend.position = "right") + 
+                            guides(fill = guide_legend(title = ""))))
+print(gg)
+
+ggsave(gg,  file = "../Figures/Han_mesodermal_legend.pdf",
+       height = 4, width = 3)
+
+```
+
+# cell separability of these subtypes
+
+```{r}
+library(e1071)
+sce_sub = sce[, !is.na(sce$han_subtype_mask)]
+dist_sep = cellCellSeparability(sce_sub, split = interaction(sce_sub$embryo, sce_sub$z),
+                                group = "han_subtype_mask",
+                                coordNames = c("x_global_affine", 
+                                               "y_global_affine"),
+                                plot = FALSE)
+
+g = cellCellSeparabilityMap(dist_sep, order = mixedsort(unique(sce_sub$han_subtype_mask)))
+g
+```
+
+# Calculate principal curves using virtual dissection
+
+```{r}
+gut_dissection = readRDS("../analysis_output/E8.5/gut_virtual_dissection.Rds")
+gut_dissection
+
+DV_class_list = list()
+
+# first identify cells that are in the foregut region of each embryo
+# then identify cells that are in the dorsal foregut region of each embryo
+for (embryoval in sort(unique(sce$embryo))) {
+
+  sce_sub = sce[, sce$embryo == embryoval]
+  
+  in_foregut = pracma::inpolygon(sce_sub$x_global_affine, -sce_sub$y_global_affine,
+                                 gut_dissection[["foregut"]][[embryoval]][["x"]],
+                                 gut_dissection[["foregut"]][[embryoval]][["y"]])
+  
+  in_dorsal_foregut = pracma::inpolygon(sce_sub$x_global_affine, -sce_sub$y_global_affine,
+                                 gut_dissection[["dorsal_foregut"]][[embryoval]][["x"]],
+                                 gut_dissection[["dorsal_foregut"]][[embryoval]][["y"]])
+  
+  par(mfrow = c(1,2))
+  plot(sce_sub$x_global_affine, -sce_sub$y_global_affine, pch = 16, cex = 0.5, asp = 1,
+       col = ifelse(sce_sub$celltype_mapped_refined == "Gut tube" & in_dorsal_foregut & in_foregut, "red", "black"),
+       main = embryoval)
+  
+    plot(sce_sub$x_global_affine, -sce_sub$y_global_affine, pch = 16, cex = 0.5, asp = 1,
+       col = ifelse(sce_sub$celltype_mapped_refined == "Gut tube" & !in_dorsal_foregut & in_foregut, "red", "black"),
+       main = embryoval)
+    
+    names(in_dorsal_foregut) <- colnames(sce_sub)
+    names(in_foregut) <- colnames(sce_sub)
+    
+    DV_class_sub = rep(NA, ncol(sce_sub))
+    names(DV_class_sub) <- colnames(sce_sub)
+    DV_class_sub[sce_sub$celltype_mapped_refined == "Gut tube" & in_dorsal_foregut & in_foregut] <- "Dorsal"
+    DV_class_sub[sce_sub$celltype_mapped_refined == "Gut tube" & !in_dorsal_foregut & in_foregut] <- "Ventral"
+    table(DV_class_sub)
+    
+    par(mfrow = c(1,1))
+    plot(sce_sub$x_global_affine, -sce_sub$y_global_affine, pch = 16, cex = 0.5, asp = 1,
+         col = c("Dorsal" = "red", "Ventral" = "blue")[DV_class_sub],
+       main = embryoval)
+    
+    DV_class_list[[embryoval]] <- DV_class_sub
+    
+}
+
+names(DV_class_list) <- NULL
+DV_class = unlist(DV_class_list)[colnames(sce)]
+
+sce$DV_class <- DV_class
+```
+
+# identify AP using principal curves
+
+```{r}
+library(princurve)
+
+sce_split = splitSCE(sce, interaction(sce$DV_class, sce$embryo))
+
+fitList = list()
+lengthList = list()
+
+for (i in 1:length(sce_split)) {
+  
+  print(i)
+  
+  if (ncol(sce_split[[i]]) == 0) next
+  
+  print(names(sce_split)[i])
+  
+  coords = as.matrix(colData(sce_split[[i]])[, c("x_global_affine", "y_global_affine")])
+  coords[,2] <- -coords[,2]
+  
+  plot(coords, asp = 1, pch = 16)
+  
+  fit0 = principal_curve(coords, df = 6)
+  
+  points(fit0, col = "blue")
+  
+  text(coords, label = fit0$ord)
+  lines(coords[fit0$ord,], type = "l")
+  ordered_cells = rownames(coords[fit0$ord,])
+  
+  # make sure order goes from anterior to posterior
+  if (diff(sce[,c(ordered_cells[c(1,length(ordered_cells))])]$y_global_affine) < 0) {
+    reordered_cells <- rev(ordered_cells)
+    cells_length = -fit0$lambda[reordered_cells] + max(fit0$lambda[reordered_cells])
+  } else {
+    reordered_cells = ordered_cells
+    cells_length = fit0$lambda[reordered_cells]
+  }
+  
+   # this should be zero
+  print(cells_length[reordered_cells[1]])
+  
+  plot(coords, asp = 1, pch = 16, cex = 0.5, main = i)
+  points(fit0, col = "blue", cex = 0.1)
+  points(coords[reordered_cells[1], , drop = FALSE], col = "orange", cex = 5, pch = 16)
+  lines(coords[reordered_cells,], type = "l", col = "orange")
+  
+  fitList[[names(sce_split)[i]]] <- fit0
+  
+  plot(sce[,reordered_cells]$y_global_affine, main = i)
+  plot(cells_length, main = i)
+  
+  lengthList[[names(sce_split)[i]]] <- cells_length
+  
+}
+
+names(lengthList) <- NULL
+
+AP_value = unlist(lengthList)[colnames(sce)]
+names(AP_value) <- colnames(sce)
+
+sce$AP_value <- AP_value
+```
+
+# save output
+
+```{r}
+DV_vals = list(DV_class = sce$DV_class, AP_value = sce$AP_value)
+names(DV_vals[["DV_class"]]) <- colnames(sce)
+names(DV_vals[["AP_value"]]) <- colnames(sce)
+saveRDS(DV_vals,
+        file = "../analysis_output/E8.5/gut_tube_DV_split.Rds")
+saveRDS(fitList, file = "../analysis_output/E8.5/gut_tube_DV_princurve.Rds")
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,808 @@
+---
+title: "E8.5 seqFISH - Downstream mesoderm analysis of Lung data"
+author: "Shila Ghazanfar"
+date: "17/08/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 16
+                     fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = FALSE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+library(RColorBrewer)
+```
+
+```{r}
+library(SpatialUtils)
+```
+
+```{r}
+na_colour = "white"
+polygon_size = 0.1
+polygon_colour = "black"
+```
+
+# Summary
+
+Here we examine the mesodermal layers that are around the gut tube, and see
+how they relate in terms of their gene expression patterns in space.
+
+# Load spatial data
+
+```{r}
+sce = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+sce
+sce <- reNormalise(sce)
+```
+
+# Add cell type and clustering information
+
+```{r}
+mapping_dt = readRDS("../analysis_output/E8.5/celltype_annotation_refined.Rds")
+colData(sce) <- cbind(colData(sce), mapping_dt[colnames(sce), setdiff(colnames(mapping_dt),colnames(colData(sce)))])
+```
+
+# Also add Nowotschin annotation
+
+```{r}
+now_joint_df = readRDS("../analysis_output/E8.5/E8.5_Nowotschin_joint_mnn_df.Rds")
+sce$gut_tube_subtype = now_joint_df[colnames(sce), "ctype"]
+colData(sce)[sce$celltype_mapped_refined != "Gut tube","gut_tube_subtype"] <- NA
+```
+
+# identify mesoderm-related types
+
+```{r}
+meso_types = c("Anterior somitic tissues",
+               "Cardiomyocytes",
+               "Cranial mesoderm",
+               "Endothelium",
+               "Gut tube",
+               "Mesenchyme",
+               "Splanchnic mesoderm",
+               "Sclerotome")
+```
+
+
+# Add cell neighbourhood
+
+```{r}
+graph = readRDS("../analysis_output/E8.5/E8.5_neighbourGraph_1.3.Rds")
+```
+
+# expand network to the lung cells
+
+```{r}
+gut_tube_cells = colnames(sce)[sce$gut_tube_subtype %in% c("Lung 1", "Lung 2")]
+length(gut_tube_cells)
+
+expanded_vertices_list = neighborhood(graph, order = 2, nodes = which(V(graph)$name %in% gut_tube_cells))
+expanded_vertices = sort(unique(unlist(lapply(expanded_vertices_list, function(x) x$name))))
+length(expanded_vertices)
+
+
+length(setdiff(expanded_vertices, gut_tube_cells))
+
+# nearby cells that are only in the mesoderm subtypes
+nearby_meso_cells = intersect(expanded_vertices, colnames(sce)[sce$celltype_mapped_refined %in% setdiff(meso_types, "Gut tube")])
+length(nearby_meso_cells)
+
+sort(table(colData(sce)[nearby_meso_cells, "celltype_mapped_refined"], useNA = "always"))
+sort(table(colData(sce)[nearby_meso_cells, "gut_tube_subtype"], useNA = "always"))
+```
+
+# identify other nearby meso cells, for pancreas 1 and 2
+
+```{r}
+pancreas_cells = colnames(sce)[sce$gut_tube_subtype %in% c("Pancreas 1", "Pancreas 2")]
+length(pancreas_cells)
+
+expanded_vertices_list = neighborhood(graph, order = 2, nodes = which(V(graph)$name %in% pancreas_cells))
+expanded_vertices = sort(unique(unlist(lapply(expanded_vertices_list, function(x) x$name))))
+length(expanded_vertices)
+
+
+length(setdiff(expanded_vertices, pancreas_cells))
+
+# nearby cells that are only in the mesoderm subtypes
+nearby_pancreas_meso_cells = intersect(expanded_vertices, colnames(sce)[sce$celltype_mapped_refined %in% setdiff(meso_types, "Gut tube")])
+length(nearby_pancreas_meso_cells)
+
+sort(table(colData(sce)[nearby_pancreas_meso_cells, "celltype_mapped_refined"], useNA = "always"))
+sort(table(colData(sce)[nearby_pancreas_meso_cells, "gut_tube_subtype"], useNA = "always"))
+```
+
+# Load DV values from Han integration
+
+```{r}
+DV_vals = readRDS("../analysis_output/E8.5/gut_tube_DV_split.Rds")
+table(nearby_meso_cells %in% names(DV_vals[[1]]))
+table(DV_vals[["DV_class"]][nearby_meso_cells], useNA = "always")
+
+table(nearby_pancreas_meso_cells %in% names(DV_vals[[1]]))
+table(DV_vals[["DV_class"]][nearby_pancreas_meso_cells], useNA = "always")
+```
+
+```{r}
+sce$AP_value <- DV_vals[["AP_value"]][colnames(sce)]
+sce$DV_class <- DV_vals[["DV_class"]][colnames(sce)]
+
+table(sce[,nearby_meso_cells]$DV_class, useNA = "always")
+```
+
+# For each nearby mesodermal cell, identify what is it's closest gut subtype
+
+```{r}
+sce$lung = as.character(sce$gut_tube_subtype)
+sce$lung[!sce$lung %in% c("Lung 1", "Lung 2")] <- NA
+colData(sce)[nearby_meso_cells, "lung"] <- DV_vals[["DV_class"]][nearby_meso_cells]
+
+table(sce$lung, useNA = "always")
+
+# add the pancreas meso cells too
+sce$lungpancreas = sce$lung
+colData(sce)[setdiff(nearby_pancreas_meso_cells, nearby_meso_cells), "lungpancreas"] <- paste0(DV_vals[["DV_class"]][setdiff(nearby_pancreas_meso_cells, nearby_meso_cells)], "_pancreasmeso")
+table(sce$lungpancreas, useNA = "always")
+
+ggplot(as.data.frame(colData(sce)),
+       aes(x = AP_value, colour = lung,
+           fill = lung)) + 
+  geom_density() + 
+  theme_classic() + 
+  facet_grid(lung~embryo, scales = "free") + 
+  NULL
+
+ggplot(as.data.frame(colData(sce)),
+       aes(x = x_global_affine, y = -y_global_affine,
+           colour = lung)) + 
+  geom_point(size = 0.5) + 
+  theme_classic() + 
+  facet_grid(z~embryo, scales = "free") + 
+  NULL
+```
+
+Plot just the lung 1 and lung 2 groups, and the additional mesodermal layers surrounding
+
+```{r}
+clusterGroups = c(
+    "10" = "Thyroid",
+    "0" = "Thymus",
+    "7" = "Lung 1",
+    "8" = "Lung 2",
+    "9" = "Liver",
+    "3" = "Pancreas 1",
+    "4" = "Pancreas 2",
+    "2" = "Small intestine",
+    "6" = "Large intestine/Colon"
+)
+
+AP_pseudo_colours = RColorBrewer::brewer.pal(length(clusterGroups), "Set3")
+names(AP_pseudo_colours) <- clusterGroups
+plot(1:length(clusterGroups), col = AP_pseudo_colours, pch = 16, cex = 5)
+
+AP_pseudo_colours["Dorsal"] <- "#9F73A1"
+AP_pseudo_colours["Ventral"] <- "#9E8EBF"
+AP_pseudo_colours["Dorsal mesoderm"] <- "#9F73A1"
+AP_pseudo_colours["Ventral mesoderm"] <- "#9E8EBF"
+AP_pseudo_colours["mesoLung 1"] <- "#9E8EBF"
+AP_pseudo_colours["mesoLung 2"] <- "#9F73A1"
+celltype_colours["Lateral plate mesoderm"]
+celltype_colours["Gut tube"]
+
+AP_pseudo_colours["Ventral Pancreas mesoderm"] <- "orange"
+AP_pseudo_colours["Dorsal Pancreas mesoderm"] <- "yellow"
+```
+
+
+```{r}
+lung_parse = c("Lung 1", "Ventral mesoderm", "Lung 2", "Dorsal mesoderm")
+names(lung_parse) <- c("Lung 1", "Ventral", "Lung 2", "Dorsal")
+
+sce$lung_parsed <- factor(lung_parse[as.character(sce$lung)], levels = as.character(lung_parse))
+
+bdf = getSegmentationVerticesDF(colData(sce),
+                                xname = "segmentation_vertices_x_global_affine",
+                                yname = "segmentation_vertices_y_global_affine",
+                                othercols = c("uniqueID", "z", "embryo", "lung_parsed"))
+
+g = ggplot(subset(bdf, embryo == "embryo1" & z == 2), 
+           aes(x = segmentation_vertices_x_global_affine,
+               y = -segmentation_vertices_y_global_affine)) +
+  geom_polygon(aes(group = uniqueID, fill = lung_parsed),
+               colour = "black", size = 0.1) + 
+  theme_classic() +
+  scale_fill_manual(values = AP_pseudo_colours, na.value = "lightgrey") +
+  guides(fill = guide_legend(title = "", override.aes = list(size = 0))) +
+  coord_fixed() +
+  xlab("") + 
+  ylab("") +
+  theme(axis.line = element_blank()) + 
+  theme(axis.text = element_blank()) + 
+  theme(axis.ticks = element_blank()) + 
+  NULL
+g
+
+ggsave(g + theme(legend.position = "none"), file = "../Figures/lung_mesoderm_endoderm_spatial.png", height = 10, width = 8)
+
+gg = as_ggplot(get_legend(g + theme(legend.position = "right") + 
+                            guides(fill = guide_legend(title = ""))))
+print(gg)
+
+ggsave(gg,  file = "../Figures/lung_mesoderm_endoderm_spatial_legend.png",
+       height = 4, width = 3)
+```
+
+# plot but with the pancreas mesoderm layers as well
+
+```{r}
+lungpancreas_parse = c("Lung 1", "Ventral mesoderm", "Lung 2", "Dorsal mesoderm",
+                       "Ventral Pancreas mesoderm", "Dorsal Pancreas mesoderm")
+names(lungpancreas_parse) <- c("Lung 1", "Ventral", "Lung 2", "Dorsal",
+                               "Ventral_pancreasmeso", "Dorsal_pancreasmeso")
+
+sce$lungpancreas_parsed <- factor(lungpancreas_parse[as.character(sce$lungpancreas)], levels = as.character(lungpancreas_parse))
+
+bdf = getSegmentationVerticesDF(colData(sce),
+                                xname = "segmentation_vertices_x_global_affine",
+                                yname = "segmentation_vertices_y_global_affine",
+                                othercols = c("uniqueID", "z", "embryo", "lungpancreas_parsed"))
+
+gList = sapply(unique(bdf$embryo), function(emb) {
+g = ggplot(subset(bdf, embryo == emb & z == 2), 
+           aes(x = segmentation_vertices_x_global_affine,
+               y = -segmentation_vertices_y_global_affine)) +
+  geom_polygon(aes(group = uniqueID, fill = lungpancreas_parsed),
+               colour = "black", size = 0.1) + 
+  theme_classic() +
+  scale_fill_manual(values = AP_pseudo_colours, na.value = "lightgrey") +
+  guides(fill = guide_legend(title = "", override.aes = list(size = 0))) +
+  coord_fixed() +
+  xlab("") + 
+  ylab("") +
+  theme(axis.line = element_blank()) + 
+  theme(axis.text = element_blank()) + 
+  theme(axis.ticks = element_blank()) + 
+  NULL
+return(g)
+}, simplify = FALSE)
+
+wrap_plots(gList, nrow = 1)
+
+gg = as_ggplot(get_legend(g + theme(legend.position = "right") +
+                            guides(fill = guide_legend(title = ""))))
+print(gg)
+```
+
+# differential expression of the AP mesodermal types
+
+using lungpancreasparsed does not affect the lung/mesoderm comparisons
+
+```{r}
+sce_sub_subtype = sce[, !is.na(sce$lungpancreas_parsed)]
+dim(sce_sub_subtype)
+
+marker_array = getMarkerArray(sce_sub_subtype, 
+                              group = "lungpancreas_parsed",
+                              subset = !is.na(sce_sub_subtype$lungpancreas_parsed),
+                              block = c("embryo"),
+                              pseudobulk = FALSE)
+
+discriminating_array_list = list()
+
+groupValue = "lungpancreas_parsed"
+
+groups = sort(unique(colData(sce_sub_subtype)[, groupValue]))
+
+for (grouplevel in groups) {
+    
+    print(grouplevel)
+    
+    groups2 = setdiff(groups, grouplevel)
+    
+    for (grouplevel2 in groups2) {
+        
+        print(grouplevel2)
+        
+        ma = getMarkerArray(sce_sub_subtype,
+                            # group = "iterMNN_stable",
+                            group = groupValue,
+                            block = "embryo",
+                            subset = colData(sce_sub_subtype)[, groupValue] %in% c(grouplevel,
+                                                               grouplevel2),
+                            pseudobulk = FALSE,
+                            verbose = FALSE)
+        
+        discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
+        
+    }
+    
+}
+
+discriminating_array_list[["Lung 1"]][["Lung 2"]]["Shh",,]
+marker_array["Shh",,]
+
+g = markerArrayPlot(discriminating_array_list[["Ventral mesoderm"]][["Dorsal mesoderm"]],
+                    grouplevel = "Ventral mesoderm",
+                    otherGroupLabel = "Dorsal mesoderm",
+                    onlyLabelTopRanked = TRUE,
+                    FDR = 0.2,
+                    LFC = 0.1)
+g
+
+markerArrayPlot(marker_array,
+                grouplevel = "Ventral mesoderm",
+                otherGroupLabel = "All other cells",
+                onlyLabelTopRanked = TRUE,
+                FDR = 0.2,
+                LFC = 0.1)
+```
+
+Compare fold changes between Lung1 and Lung2 with that from the gut tube
+cells themselves
+
+```{r}
+fdr_level = 0.05
+lfc_level = 0.5
+df = data.frame(
+  gene = rownames(discriminating_array_list[["Lung 1"]][["Lung 2"]][,"Lung 1",]),
+  gut_LFC = discriminating_array_list[["Lung 1"]][["Lung 2"]][,"Lung 1","LFC"],
+  gut_FDR = discriminating_array_list[["Lung 1"]][["Lung 2"]][,"Lung 1","FDR"],
+  meso_LFC = discriminating_array_list[["Ventral mesoderm"]][["Dorsal mesoderm"]][,"Ventral mesoderm","LFC"],
+  meso_FDR = discriminating_array_list[["Ventral mesoderm"]][["Dorsal mesoderm"]][,"Ventral mesoderm","FDR"])
+df$sig <- NA
+df$sig[df$gut_FDR < fdr_level & abs(df$gut_LFC) > lfc_level] <- "Endoderm"
+df$sig[df$meso_FDR < fdr_level & abs(df$meso_LFC) > lfc_level] <- "Mesoderm"
+df$sig[df$sig == "Mesoderm" & (df$gut_FDR < fdr_level & abs(df$gut_LFC) > lfc_level)] <- "Both"
+table(df$sig)
+
+g = ggplot(df, aes(x = gut_LFC, y = meso_LFC)) + 
+  geom_point(aes(colour = sig)) +
+  scale_colour_manual(values = c("Both" = "black", "Endoderm" = as.character(celltype_colours["Gut tube"]),
+                                 "Mesoderm" = as.character(celltype_colours["Lateral plate mesoderm"])),
+                      na.value = "grey") + 
+  theme_classic() + 
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  geom_text_repel(aes(label = gene, colour = sig), data = subset(df, !is.na(sig))) +
+  coord_fixed() + 
+  guides(colour = guide_legend(title = "", 
+                               override.aes = list(size = 5, alpha = 1))) +
+  xlab("LFC (ventral vs dorsal endoderm)") + 
+  ylab("LFC (ventral vs dorsal mesoderm)") + 
+  theme(legend.position = "bottom") +
+  NULL
+g
+ggsave(g, file = "../Figures/lung_mesoderm_endoderm_LFC.pdf", height = 7, width = 6)
+```
+
+# Compare Lung 1 and Lung 2
+
+```{r}
+g = markerArrayPlot(discriminating_array_list[["Lung 1"]][["Lung 2"]],
+                    grouplevel = "Lung 1",
+                    otherGroupLabel = "Lung 2",
+                    onlyLabelTopRanked = 20,
+                    FDR = fdr_level,
+                    LFC = lfc_level)
+
+g = markerArrayPlot2(discriminating_array_list[["Lung 1"]][["Lung 2"]],
+                    grouplevel = "Lung 1",
+                    otherGroupLabel = "Lung 2",
+                    onlyLabelTopRanked = 20,
+                    FDR = fdr_level,
+                    LFC = lfc_level,
+                    sigColours = as.character(AP_pseudo_colours[c("Lung 1", "Lung 2")])) +
+  ggtitle("") +
+  guides(colour = FALSE, fill = FALSE) + 
+  NULL
+
+g 
+
+ggsave(g, file = "../Figures/Nowotschin_DE_volcano_Lung1_Lung2.pdf",
+       height = 6, width = 4)
+```
+
+# compare mesodermal differences with pancreas
+
+```{r}
+df$pancreasmeso_LFC = discriminating_array_list[["Ventral Pancreas mesoderm"]][["Dorsal Pancreas mesoderm"]][,"Ventral Pancreas mesoderm","LFC"]
+df$pancreasmeso_FDR = discriminating_array_list[["Ventral Pancreas mesoderm"]][["Dorsal Pancreas mesoderm"]][,"Ventral Pancreas mesoderm","FDR"]
+
+df$sigmeso <- NA
+df$sigmeso[df$pancreasmeso_FDR < fdr_level & abs(df$pancreasmeso_LFC) > lfc_level] <- "Pancreas"
+df$sigmeso[df$meso_FDR < fdr_level & abs(df$meso_LFC) > lfc_level] <- "Lung"
+df$sigmeso[df$sigmeso == "Lung" & (df$pancreasmeso_FDR < fdr_level & abs(df$pancreasmeso_LFC) > lfc_level)] <- "Both"
+table(df$sigmeso)
+  
+  
+g1 = ggplot(df, aes(x = pancreasmeso_LFC, y = meso_LFC)) + 
+  geom_point(aes(colour = sigmeso)) +
+  scale_colour_manual(values = c("Both" = "black", "Pancreas" = "orange",
+                                 "Lung" = as.character(celltype_colours["Lateral plate mesoderm"])),
+                      na.value = "grey") + 
+  theme_classic() + 
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  geom_text_repel(aes(label = gene, colour = sigmeso), data = subset(df, !is.na(sigmeso))) +
+  coord_fixed() + 
+  guides(colour = guide_legend(title = "", 
+                               override.aes = list(size = 5, alpha = 1))) +
+  xlab("LFC (ventral vs dorsal pancreas mesoderm)") + 
+  ylab("LFC (ventral vs dorsal lung mesoderm)") + 
+  theme(legend.position = "bottom") +
+  NULL
+g1
+```
+
+# Heatmap of expression for these subgroups
+
+```{r}
+sce_mean = scater::aggregateAcrossCells(sce,
+                                       sce$lungpancreas_parsed,
+                                       average = TRUE,
+                                       use_exprs_values = "logcounts")
+
+assay(sce_mean, "logcounts_relative") <- t(apply(assay(sce_mean, "logcounts"), 1, function(x) x/max(x)))
+
+sce_mean_sub = sce_mean[(!is.na(df$sig)) | (!is.na(df$sigmeso)),]
+
+df_sub = df[rownames(sce_mean_sub),]
+df_sub[is.na(df_sub$sig), "sig"] <- "Not"
+df_sub[is.na(df_sub$sigmeso), "sigmeso"] <- "Not"
+
+rA = rowAnnotation(df = df_sub[rownames(sce_mean_sub),c("sig", "sigmeso")],
+                annotation_name_side = "bottom",
+                col = list("sig" = c("Mesoderm" = "green",
+                                     "Endoderm" = "blue",
+                                     "Both" = "purple",
+                                     "Not" = "black"),
+                           "sigmeso" = c("Pancreas" = "orange",
+                                     "Lung" = "pink",
+                                     "Both" = "coral",
+                                     "Not" = "black")))
+
+Heatmap(assay(sce_mean_sub, "logcounts_relative"), col = c("gray75", "cornflowerblue", "black"),
+     
+                row_split = interaction(df_sub[rownames(sce_mean_sub),"sig"],
+                                df_sub[rownames(sce_mean_sub),"sigmeso"]),
+        
+        show_row_names = TRUE, right_annotation = rA)
+```
+
+
+# Load imputed data
+
+```{r}
+library(DelayedArray)
+library(HDF5Array)
+
+file_combined = "../analysis_output/imputation/combined.h5"
+cnames = readRDS("../analysis_output/imputation/combined_cnames.Rds")
+rnames = readRDS("../analysis_output/imputation/combined_rnames.Rds")
+
+imp <- HDF5Array(filepath = file_combined, name = "logcounts")
+rownames(imp) <- rnames
+colnames(imp) <- cnames
+
+genes_imp = rnames
+```
+
+
+# Perform DE test with imputed expression
+
+```{r}
+sce_sub_subtype <- SingleCellExperiment(assay = list(logcounts = imp[,colnames(sce)[!is.na(sce$lung_parsed)]]))
+colData(sce_sub_subtype) <- colData(sce)[colnames(sce_sub_subtype),]
+sce_sub_subtype
+
+marker_array = getMarkerArray(sce_sub_subtype, 
+                              group = "lung_parsed",
+                              subset = !is.na(sce_sub_subtype$lung_parsed),
+                              block = "embryo",
+                              pseudobulk = TRUE)
+
+discriminating_array_list = list()
+
+groupValue = "lung_parsed"
+
+groups = sort(unique(colData(sce_sub_subtype)[, groupValue]))
+
+for (grouplevel in groups) {
+    
+    print(grouplevel)
+    
+    groups2 = setdiff(groups, grouplevel)
+    
+    for (grouplevel2 in groups2) {
+        
+        print(grouplevel2)
+        
+        ma = getMarkerArray(sce_sub_subtype,
+                            group = groupValue,
+                            block = "embryo",
+                            subset = colData(sce_sub_subtype)[, groupValue] %in% c(grouplevel,
+                                                               grouplevel2),
+                            pseudobulk = TRUE,
+                            verbose = FALSE)
+        
+        discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
+        
+    }
+    
+}
+saveRDS(discriminating_array_list, file = "../analysis_output/E8.5/lung_mesoderm_DE_imputed.Rds")
+
+discriminating_array_list[["Lung 1"]][["Lung 2"]]["Shh",,]
+marker_array["Shh",,]
+
+g = markerArrayPlot(discriminating_array_list[["Ventral mesoderm"]][["Dorsal mesoderm"]],
+                    grouplevel = "Ventral mesoderm",
+                    otherGroupLabel = "Dorsal mesoderm",
+                    onlyLabelTopRanked = TRUE,
+                    FDR = 0.2,
+                    LFC = 0.1)
+g
+
+markerArrayPlot(marker_array,
+                grouplevel = "Ventral mesoderm",
+                otherGroupLabel = "All other cells",
+                onlyLabelTopRanked = TRUE,
+                FDR = 0.2,
+                LFC = 0.1)
+```
+
+compare the endoderm and mesodermal groups between 1 and 2
+
+```{r}
+df = data.frame(
+  gene = rownames(discriminating_array_list[["Lung 1"]][["Lung 2"]][,"Lung 1",]),
+  Lung1_LFC = discriminating_array_list[["Lung 1"]][["mesoLung 1"]][,"Lung 1","LFC"],
+  Lung1_FDR = discriminating_array_list[["Lung 1"]][["mesoLung 1"]][,"Lung 1","FDR"],
+  Lung2_LFC = discriminating_array_list[["Lung 2"]][["mesoLung 2"]][,"Lung 2","LFC"],
+  Lung2_FDR = discriminating_array_list[["Lung 2"]][["mesoLung 2"]][,"Lung 2","FDR"])
+
+g = ggplot(df, aes(x = Lung1_LFC, y = Lung2_LFC)) + 
+  geom_point() +
+  theme_classic() + 
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0) + 
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  coord_fixed() + 
+  xlab("Endoderm/Mesoderm LFC (higher in Endoderm)\nin Lung 1 (ventral) cells") + 
+  ylab("Endoderm/Mesoderm LFC (higher in Endoderm)\nin Lung 2 (dorsal) cells") + 
+  NULL
+
+g + geom_text_repel(aes(label = gene), data = subset(df, abs(Lung1_LFC) > 0.5 | abs(Lung2_LFC) > 0.5)) +
+  NULL
+
+g1 = g + geom_text_repel(aes(label = gene),
+                    data = subset(df, (abs(Lung1_FDR) < 0.2 & abs(Lung1_LFC) > 0.5) & 
+                                    !(abs(Lung2_FDR) < 0.2 & abs(Lung2_LFC) > 0.5)),
+                    colour = "red") +
+  ggtitle("Significant in Lung 1 only") +
+  NULL
+g1
+
+g2 = g + geom_text_repel(aes(label = gene), 
+                         data = subset(df, !(abs(Lung1_FDR) < 0.2 & abs(Lung1_LFC) > 0.5) & 
+                                         (abs(Lung2_FDR) < 0.2 & abs(Lung2_LFC) > 0.5)),
+                         colour = "red") +
+  ggtitle("Significant in Lung 2 only") +
+  NULL
+g2
+
+g3 = g + geom_text_repel(aes(label = gene), 
+                    data = subset(df, (abs(Lung1_FDR) < 0.2 & abs(Lung1_LFC) > 0.5) | 
+                                    (abs(Lung2_FDR) < 0.2 & abs(Lung2_LFC) > 0.5)),
+                    colour = "red") +
+    ggtitle("Significant in either Lung 1 or Lung 2") +
+  NULL
+g3 
+
+g4 = g + geom_text_repel(aes(label = gene), 
+                    data = subset(df, (abs(Lung1_FDR) < 0.2 & abs(Lung1_LFC) > 0.5) & 
+                                    (abs(Lung2_FDR) < 0.2 & abs(Lung2_LFC) > 0.5)),
+                    colour = "red") +
+  ggtitle("Significant in both Lung 1 and Lung 2") +
+  NULL
+g4
+
+
+g3 + g4 + g1 + g2 + plot_layout(ncol = 2, nrow = 2)
+
+gene = "Krt18"
+
+df = data.frame(
+  gene = logcounts(sce_sub_subtype)[gene,],
+  embryo = sce_sub_subtype$embryo,
+  closest_gut_tube_subtype = sce_sub_subtype$closest_gut_tube_subtype
+)
+
+ggplot(subset(df, closest_gut_tube_subtype %in% c("Lung 1", "Lung 2", "mesoLung 1", "mesoLung 2")),
+       aes(x = closest_gut_tube_subtype, y = gene)) + 
+  geom_boxplot(aes(fill = embryo)) + 
+  ggtitle(gene) + 
+  NULL
+```
+
+# continuous expression of genes along the AP axes for endoderm and mesoderm
+
+```{r}
+table(sce$DV_class, !is.na(sce$AP_value), useNA = "always")
+table(sce$closest_gut_tube_subtype, !is.na(sce$AP_value), useNA = "always")
+
+gList = list()
+
+{
+  genes = c("Shh", "Ptch1", "Jag1", "Notch1")
+  for (gene in genes) {
+    
+if (gene %in% rownames(sce)) {
+  exp = logcounts(sce)[gene,]
+  type = "Measured"
+} else {
+  exp = rep(NA, ncol(sce))
+  type = "Imputed"
+}
+    
+    impExp = imp[gene,colnames(sce)]
+    
+    if (type == "Measured") {
+      impExp <- rep(NA, ncol(sce))
+    }
+
+df = data.frame(
+  gene = exp,
+  geneImp = impExp,
+  embryo = sce$embryo,
+  DV_class = sce$DV_class,
+  AP_value = sce$AP_value,
+  closest_gut_tube_subtype = sce$closest_gut_tube_subtype,
+  han_subtype_mask = sce$han_subtype_mask,
+  celltype_mapped_refined = sce$celltype_mapped_refined
+)
+
+df$AP_value_norm = unsplit(tapply(df$AP_value, list(df$embryo, df$DV_class), function(x) x - min(x)),
+                           list(df$embryo, df$DV_class))
+
+df$AP_value_norm_scale = unsplit(tapply(df$AP_value, list(df$embryo, df$DV_class), function(x) (x - min(x))/diff(range(x, na.rm = TRUE))),
+                           list(df$embryo, df$DV_class))
+
+
+df$derm_type = ifelse(substring(df$closest_gut_tube_subtype, 1,4) == "meso", "Mesoderm", "Endoderm")
+
+df_sub = subset(df, !is.na(AP_value))
+df_sub$dermDV <- interaction(df_sub$DV_class, df_sub$derm_type, sep = " ")
+df_sub$dermDV <- factor(as.character(df_sub$dermDV),
+                        levels = c("Dorsal Endoderm", 
+                                   "Dorsal Mesoderm",
+                                   "Ventral Endoderm",
+                                   "Ventral Mesoderm"))
+
+g = ggplot(df_sub, aes(x = AP_value_norm_scale, y = gene,
+                   group = derm_type,
+                   colour = derm_type,
+                   fill = derm_type)) +
+  geom_smooth(data = df_sub[!is.na(df_sub$gene),]) +
+  geom_smooth(aes(y = geneImp), linetype = "dotted", #alpha = 0.1,
+              data = df_sub[!is.na(df_sub$geneImp),]) +
+  facet_grid(~ dermDV, scales = "free") +
+  theme_classic() +
+  ggtitle(gene) + 
+  theme(legend.position = "bottom") + 
+  geom_hline(yintercept = 0) +
+  xlab("") +
+  ylab("Expression") +
+  scale_colour_brewer(palette = "Set1", aesthetics = c("fill", "colour")) +
+  theme(strip.background = element_rect(colour = "white")) + 
+  guides(colour = guide_legend(title = "")) + 
+  guides(fill = guide_legend(title = "")) +
+  theme(axis.text.x = element_blank()) +
+  theme(axis.ticks.x = element_blank()) +
+  theme(axis.line.x = element_blank()) +
+  NULL
+g
+gList[[gene]] <- g
+  }
+}
+
+g = gList[["Shh"]] + theme(legend.position = "none") +
+  gList[["Ptch1"]] + plot_layout(nrow = 2)
+g
+ggsave(g, file = "../Figures/AP_meso_endo_Shh_Ptch1.pdf", height = 5, width = 8)
+
+g = gList[["Jag1"]] + theme(legend.position = "none") + 
+  gList[["Notch1"]] + plot_layout(nrow = 2)
+g
+ggsave(g, file = "../Figures/AP_meso_endo_Jag1_Notch1.pdf", height = 5, width = 8)
+```
+
+# Cell cell neighbourhood of nowotschin cells and han nearby mesodermal cells
+
+Mesoderm/Gut tube interaction
+
+```{r}
+sce$combined_mesoendo = as.character(sce$han_subtype_mask)
+sce$combined_mesoendo[substring(sce$combined_mesoendo, 1,1) == "E"] <- NA
+sce$combined_mesoendo[sce$celltype_mapped_refined == "Gut tube"] <- as.character(sce$gut_tube_subtype[sce$celltype_mapped_refined == "Gut tube"])
+
+table(sce$combined_mesoendo, useNA = "always")
+
+
+out = cellCellContact(sce, group = "combined_mesoendo", graph)
+
+
+graph = readRDS("../analysis_output/E8.5/E8.5_neighbourGraph_1.3.Rds")
+
+nperm = 500
+
+split_categories = interaction(sce$embryo, sce$z)
+sce_split = splitSCE(sce, split_categories)
+
+outList = lapply(sce_split, cellCellContact, group = "combined_mesoendo",
+                 graph = graph, nperm = nperm, plot = FALSE)
+gList = lapply(outList, cellCellContactMap, order = levels(cellCellContactMap(outList[[1]])$data$subcluster_1), exclude = "Low quality")
+
+gList2 = sapply(names(gList), function(n) gList[[n]] + ggtitle(n), simplify = FALSE)
+wrap_plots(gList2)
+
+gList[[1]]
+
+pmat_all = lapply(outList, "[[", 2)
+all_celltypes = sort(unique(unlist(lapply(pmat_all,rownames))))
+pmatArray = abind::abind(lapply(pmat_all, function(x) {
+  x_all = matrix(NA, nrow = length(all_celltypes),
+                 ncol = length(all_celltypes), dimnames = list(all_celltypes, all_celltypes))
+  x_all[rownames(x), colnames(x)] <- x
+  return(x_all)
+}), along = 3)
+pmatMean = apply(pmatArray, 1:2, mean, na.rm = TRUE)
+g = cellCellContactMap(list(obs = pmatMean, pmat = pmatMean),
+                       exclude = "Low quality")
+g
+ggsave(g, file = "../Figures/neighbourhood_mesoendo_Han_Nowotschin.pdf",
+       height = 8, width = 8)
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

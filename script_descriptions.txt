@@ -53,6 +53,15 @@ E8.5_Han.Rmd
 E8.5_Han_Nowotschin.Rmd
 - jointly map data from Nowotschin et al (2019) and Han et al (2020).
 
+E8.5_Gut_AP.Rmd
+- characterise spatial AP axis
+
+E8.5_Han_Nowotschin_downstream.Rmd
+- further analysis of joint data from Nowotschin et al (2019) and Han et al (2020).
+
+E8.5_Lung_mesoderm.Rmd
+- compare mesoderm layers between lung subtypes
+
 E8.5_brain.Rmd
 - subcluster Forebrain/Midbrain/Hindbrain cluster
 

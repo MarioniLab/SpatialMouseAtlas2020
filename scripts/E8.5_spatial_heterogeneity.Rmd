@@ -1,0 +1,603 @@
+---
+title: "E8.5 seqFISH - Assessing spatial heterogeneity"
+author: "Shila Ghazanfar"
+date: "04/08/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 16
+                     fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = TRUE,cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+library(reshape)
+library(scHOT)
+```
+
+```{r}
+library(SpatialUtils)
+```
+
+# Load data
+
+```{r}
+sce = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+sce
+sce <- reNormalise(sce)
+```
+
+# Add cell type and clustering information
+
+```{r}
+mapping_dt = readRDS("../analysis_output/E8.5/celltype_annotation_refined.Rds")
+colData(sce) <- cbind(colData(sce), mapping_dt[colnames(sce), setdiff(colnames(mapping_dt),colnames(colData(sce)))])
+```
+
+```{r}
+sceSplit = splitSCE(sce, interaction(sce$embryo, sce$z))
+```
+
+Get a network distance
+
+```{r}
+graph = readRDS("../analysis_output/E8.5/E8.5_neighbourGraph_1.3.Rds")
+
+graph_dist_list = lapply(sceSplit, function(sce_sub) {
+  
+  # subset to relevant cells
+  graph_sub = induced.subgraph(graph, V(graph)$name %in% colnames(sce_sub))
+  
+  # add the remaining cells as unconnected nodes in the graph
+  graph_sub = igraph::add.vertices(graph_sub, length(setdiff(colnames(sce_sub), V(graph_sub)$name)), 
+                                   attr = list(name = setdiff(colnames(sce_sub), V(graph_sub)$name)))
+  
+  graph_dist = igraph::distances(graph_sub, mode = "all")
+  
+  # setting diag() to Inf means that the cell itself is not included in the 
+  # weighted mean calculation
+  # if instead I set it to 1, then itself is included in the calculation
+  diag(graph_dist) <- Inf
+  graph_dist[1:5,1:5]
+  return(graph_dist)
+})
+
+
+graph_dist_inc_list = lapply(sceSplit, function(sce_sub) {
+  
+  # subset to relevant cells
+  graph_sub = induced.subgraph(graph, V(graph)$name %in% colnames(sce_sub))
+  
+  # add the remaining cells as unconnected nodes in the graph
+  graph_sub = igraph::add.vertices(graph_sub, length(setdiff(colnames(sce_sub), V(graph_sub)$name)), 
+                                   attr = list(name = setdiff(colnames(sce_sub), V(graph_sub)$name)))
+  
+  graph_dist = igraph::distances(graph_sub, mode = "all")
+  
+  # setting diag() to Inf means that the cell itself is not included in the 
+  # weighted mean calculation
+  # if instead I set it to 1, then itself is included in the calculation
+  diag(graph_dist) <- 1
+  graph_dist[1:5,1:5]
+  return(graph_dist)
+})
+```
+
+```{r}
+# get smoothed expression
+smoothlist = sapply(names(sceSplit), function(s) {
+  # graph_dist = graph_dist_list[[s]]
+  sce_sub = sceSplit[[s]]
+  graph_dist = graph_dist_list[[s]][colnames(sce_sub), colnames(sce_sub)]
+  
+  print(s)
+  
+  allsmooth_raw = sapply(as.character(unique(sce_sub$celltype_mapped_refined)), function(l) {
+    print(l)
+    smooth = weightedMeanMatrix(logcounts(sce_sub), graph_dist, sub = sce_sub$celltype_mapped_refined == l)
+  }, simplify = FALSE)
+  allsmooth = do.call(cbind, allsmooth_raw)[,colnames(sce_sub)]
+  
+  return(allsmooth)
+}, simplify = FALSE)
+
+smooth = do.call(cbind, smoothlist)[, colnames(sce)]
+smooth[is.na(smooth)] <- NA
+```
+
+```{r}
+# get smoothed expression including the individual cell as well
+smoothlist_inc = sapply(names(sceSplit), function(s) {
+  # graph_dist = graph_dist_inc_list[[s]]
+  sce_sub = sceSplit[[s]]
+  graph_dist = graph_dist_list[[s]][colnames(sce_sub), colnames(sce_sub)]
+  
+  print(s)
+  
+  allsmooth_raw = sapply(as.character(unique(sce_sub$celltype_mapped_refined)), function(l) {
+    print(l)
+    smooth = weightedMeanMatrix(logcounts(sce_sub), graph_dist, sub = sce_sub$celltype_mapped_refined == l)
+  }, simplify = FALSE)
+  allsmooth = do.call(cbind, allsmooth_raw)[,colnames(sce_sub)]
+  
+  return(allsmooth)
+}, simplify = FALSE)
+
+smoothinc = do.call(cbind, smoothlist_inc)[, colnames(sce)]
+smoothinc[is.na(smoothinc)] <- NA
+
+saveRDS(smoothinc, file = "../analysis_output/E8.5/smoothinc.Rds")
+```
+
+# test for a celltype specific effect in space for a given gene
+
+```{r}
+res = array(NA, dim = c(nrow(sce), length(unique(sce$celltype_mapped_refined)), 3),
+            dimnames = list(rownames(sce),
+                            sort(unique(sce$celltype_mapped_refined)),
+                            c("prop", "pvalue", "tstat")))
+
+for (gene in sort(rownames(sce))) {
+  print(gene)
+  for (ct_val in sort(unique(sce$celltype_mapped_refined))) {
+    
+    # print(ct_val)
+    
+    emb = sce$embryo
+    zs = sce$z
+    ct = sce$celltype_mapped_refined
+    actual_gene = logcounts(sce)[gene,]
+    smooth_gene = smooth[gene,]
+    
+    
+    df = data.frame(emb = emb,
+                    zs = zs, 
+                    ct = ct,
+                    actual_gene = actual_gene,
+                    smooth_gene = smooth_gene
+                    # subclust = subclust
+    )
+    
+    df <- subset(df, ct == ct_val)
+    
+    
+    
+    fit1 = lm(actual_gene ~ smooth_gene + emb*zs, data = na.omit(df))
+    fit2 = lm(actual_gene ~ emb*zs, data = na.omit(df))
+    
+    val = "smooth_gene"
+    summary(fit1)
+    anova(fit1)
+    ftab = anova(fit2,fit1)
+    ftab
+    ftab$`Pr(>F)`[2]
+    an = anova(fit1)
+    prop_explained = an[val,2]/colSums(an)[2]
+    prop_explained
+    
+    
+    res[gene, ct_val, "prop"] <- prop_explained
+    res[gene, ct_val, "pvalue"] <- ftab$`Pr(>F)`[2]
+    if (val %in% rownames( summary(fit1)$coef)) {
+      res[gene, ct_val, "tstat"] <- summary(fit1)$coef[val, "t value"]
+    }
+  }
+}
+
+
+fdr = apply(res[,,"pvalue"],2,p.adjust, method = "BH")
+fdr[is.na(fdr)] <- 1
+totalvar = t(apply(logcounts(sce), 1, function(x){
+  tapply(x, sce$celltype_mapped_refined, function(y)sd(y)/mean(y))
+}))[dimnames(res)[[1]], dimnames(res)[[2]]]
+totalmean = t(apply(logcounts(sce), 1, function(x){
+  tapply(x, sce$celltype_mapped_refined, function(y)mean(y))
+}))[dimnames(res)[[1]], dimnames(res)[[2]]]
+
+# output res as an excel spreadsheet, each cell type is a table
+res_table_file = "../analysis_output/E8.5/heterogeneity_celltypes_tstatistics.xlsx"
+library(openxlsx)
+for (ct in dimnames(res)[[2]]) {
+  if (ct == dimnames(res)[[2]][1]) {
+    wb = createWorkbook()
+  }
+  
+  if (ct == "Forebrain/Midbrain/Hindbrain"){
+    ct_name = "Forebrain_Midbrain_Hindbrain"
+  } else {
+    ct_name = ct
+  }
+  
+  addWorksheet(wb,sheetName = ct_name)
+  
+  res_sub = cbind(res[,ct,], FDR = fdr[,ct])
+  colnames(res_sub) <- c("proportion_variance_explained",
+                         "pvalue",
+                         "tstatistic",
+                         "FDR_qvalue")
+  writeData(wb, 
+            ct_name, 
+            res_sub,
+            rowNames = TRUE)
+  
+  if (ct == rev(dimnames(res)[[2]])[1]) {
+    saveWorkbook(wb,
+                 file = res_table_file,
+                 overwrite = TRUE)
+  }
+}
+
+
+# number of significant (FDR < 0.05) genes that are spatially heterogeneous
+# per celltype
+sort(apply(fdr, 2, function(x) sum(x < 0.05, na.rm = TRUE)))
+
+# number of celltypes for which genes are significant (FDR < 0.05) for spatial
+# heterogeneity
+sort(apply(fdr, 1, function(x) sum(x < 0.05, na.rm = TRUE)))
+
+# dotplot of celltypes and genes that are sig
+fdr_long = melt(fdr)
+colnames(fdr_long) <- c("Gene", "Celltype", "FDR")
+
+# lateral inhibition?
+# expression lower than neighbours
+tstat_mask = res[,,"tstat"]
+tstat_mask[fdr > 0.05] <- 0 
+table(sign(tstat_mask))
+neg = which(tstat_mask < 0, arr = TRUE)
+cbind(neg, colnames(tstat_mask[,neg[,2]]))
+t(sapply(1:nrow(neg), function(i) {
+  c(res[neg[i,1], neg[i,2],], rownames(neg)[i], colnames(tstat_mask)[neg[i,2]])
+}))
+
+i = "Gut tube"
+plot(res[,i,1], -log10(res[,i,2]), type = "n", main = dimnames(res)[[2]][i])
+text(res[,i,1], -log10(res[,i,2]), labels = dimnames(res)[[1]])
+
+plot(totalvar[,i], -log10(res[,i,2]), type = "n", main = dimnames(res)[[2]][i])
+text(totalvar[,i], -log10(res[,i,2]), labels = dimnames(res)[[1]])
+
+plot(totalvar[,i], res[,i,1], type = "n", main = dimnames(res)[[2]][i])
+text(totalvar[,i], res[,i,1], labels = dimnames(res)[[1]],
+     col = ifelse(fdr[,i]<0.05, "black", "grey"))
+
+plot(totalmean[,i], totalvar[,i], type = "n", main = i)
+text(totalmean[,i], totalvar[,i], labels = dimnames(res)[[1]],
+     col = ifelse(fdr[,i] < 0.05, "black", "grey"))
+
+
+stats = modelGeneVar(logcounts(sce)[,sce$celltype_mapped_refined == i],
+                     block = interaction(sce$embryo, sce$z)[sce$celltype_mapped_refined == i])
+table(stats$FDR < 0.05)
+
+addmargins(table(stats$FDR < 0.05, fdr[,i] < 0.05))
+addmargins(table(stats$FDR < 0.05, approx_fdr[,i] < 0.05))
+
+which(stats$FDR < 0.05 & approx_fdr[,i] > 0.05)
+
+boxplot(res[stats$FDR < 0.05, i, "prop"])
+sort(res[stats$FDR < 0.05, i, "prop"])
+sort(-log10(approx_fdr[stats$FDR < 0.05, i]))
+boxplot(-log10(approx_fdr[stats$FDR < 0.05, i]))
+
+plot(totalmean[,i], totalvar[,i], type = "n", main = i)
+text(totalmean[,i], totalvar[,i], labels = dimnames(res)[[1]],
+     col = ifelse(stats$FDR < 0.05, "black", "grey"))
+fit = loess(totalvar[,i] ~ totalmean[,i], span = 0.25)
+points(totalmean[,i], fit$fitted, col = "red")
+
+residual = fit$residuals
+plot(totalmean[,i], residual, type = "n", main = i)
+text(totalmean[,i], residual, labels = dimnames(res)[[1]],
+     col = ifelse(approx_fdr[,i] < 0.05, "black", "grey"))
+abline(h = 0)
+
+
+plot(totalmean[,i], res[,i,1], type = "n", main = i,
+     xlab = "Mean expression", ylab = "Proportion of variance explained by neighbouring cells")
+text(totalmean[,i], res[,i,1], labels = dimnames(res)[[1]],
+     col = ifelse(fdr[,i]<0.05, "red", "grey"))
+
+
+statsList = sapply(dimnames(res)[[2]],
+                   function(i) {
+                     modelGeneVar(logcounts(sce)[,sce$celltype_mapped_refined == i],
+                                  block = interaction(sce$embryo, sce$z)[sce$celltype_mapped_refined == i])
+                   }, simplify = FALSE)
+
+
+plot(totalvar[,i], res[,i,1], type = "n", main = i,
+     xlab = "Total expression variance", ylab = "Proportion of variance explained by neighbouring cells")
+text(totalvar[,i], res[,i,1], labels = dimnames(res)[[1]],
+     col = ifelse(fdr[,i]<0.05 & statsList[[i]]$FDR < 0.05, "red", "grey"))
+
+sum(fdr[,i]<0.05 & statsList[[i]]$FDR < 0.05)
+
+boxplot(res[,i,1] ~ I(fdr[,i]<0.05 & statsList[[i]]$FDR < 0.05))
+
+# moran's I
+sce_embryo1_z2_split = splitSCE(sce[,sce$embryo == "embryo1" & sce$z == 2],
+                                split = sce[,sce$embryo == "embryo1" & sce$z == 2]$celltype_mapped_refined)
+sce_embryo1_z2_split <- sce_embryo1_z2_split[unlist(lapply(sce_embryo1_z2_split, ncol)) >= 50]
+miList = lapply(sce_embryo1_z2_split, function(x) p.adjust(getMI(x, out_weight)[,4], method = "BH"))
+miListobs = lapply(sce_embryo1_z2_split, function(x) getMI(x, out_weight)[,1])
+
+
+varstats_long = melt(res[,,1])
+varstats_long$fdr <- melt(fdr)[,3]
+varstats_long$statsfdr <- head(unlist(lapply(statsList, function(x) as.data.frame(x[,"FDR"]))))
+varstats_long$sig <- varstats_long$fdr < 0.05 & varstats_long$statsfdr < 0.05
+varstats_long$mi_fdr <- unlist(miList)[paste0(varstats_long$X2,".",varstats_long$X1)]
+varstats_long$mi_obs <- unlist(miListobs)[paste0(varstats_long$X2,".",varstats_long$X1)]
+
+
+table(varstats_long$X2, varstats_long$sig)
+tapply(varstats_long$value,
+       list(varstats_long$X2, varstats_long$sig),
+       mean)
+
+ggplot(varstats_long, aes(x = X2, y = value)) + 
+  geom_point(aes(colour = sig)) + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  facet_grid(sig ~ .) +
+  NULL
+
+ggplot(varstats_long, aes(x = X2, y = value)) + 
+  geom_point(aes(colour = mi_fdr < 0.05)) + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  facet_grid(sig ~ .) +
+  NULL
+
+
+ggplot(subset(varstats_long, X2 = "Gut tube"), aes(x = value, y = mi_obs)) + 
+  geom_point(aes(colour = mi_fdr < 0.05)) + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  facet_grid(sig ~ .) +
+  NULL
+
+prop_mask = res[,,3] 
+prop_mask[fdr > 0.05] <- NA
+prop_mask <- prop_mask[, apply(prop_mask, 2, function(x) sum(!is.na(x))) != 0]
+prop_mask <- prop_mask[, !colnames(prop_mask) %in% c("Low quality", "ExE endoderm")]
+prop_mask_ordered = prop_mask[, order(apply(prop_mask, 2, quantile, 0.5, na.rm = TRUE), decreasing = TRUE)]
+boxplot(prop_mask_ordered,las = 2, horizontal = FALSE,
+        col = celltype_colours[colnames(prop_mask_ordered)])
+
+prop_mask_ordered_df = reshape::melt(prop_mask_ordered)
+prop_mask_ordered_df$X2 <- factor(as.character(prop_mask_ordered_df$X2),
+                                  levels = colnames(prop_mask_ordered))
+prop_mask_ordered_df <- updateMesenchymeLabel(prop_mask_ordered_df)
+prop_mask_ordered_df$rank <- unsplit(tapply(prop_mask_ordered_df$value, prop_mask_ordered_df$X2, function(x) rank(-x)), prop_mask_ordered_df$X2)
+
+saveRDS(prop_mask_ordered_df, file = "../analysis_output/E8.5/prop_mask_ordered_df.Rds")
+
+library(ggbeeswarm)
+g = ggplot(subset(prop_mask_ordered_df, value > 0), 
+           aes(x = X2, 
+               y = value, fill = X2)) + 
+  geom_point(aes(colour = X2)) +
+  geom_violin(aes(fill = X2), scale = "width", draw_quantiles = 0.5) +
+  geom_text_repel(aes(label = X1),
+                  data = subset(prop_mask_ordered_df, rank <= 3 & value >= 30
+                  ),
+                  angle = 0,
+                  hjust = 0,
+                  direction = "y",
+                  force = 0.1,
+                  segment.colour = NA,
+                  fontface = "italic",
+                  size = 6
+  ) +
+  theme_classic() +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = celltype_colours, aesthetics = c("fill", "colour")) + 
+  ylab("t-statistic") + 
+  xlab("") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 20)) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank()
+  ) +
+  theme(plot.margin = unit(c(0.3, 0.1, 0.2, 1), "in")) +
+  NULL
+ggsave(g, file = "../Figures/heterogeneity_celltypes_tstatistics_beeswarm.pdf",
+       height = 8, width = 16)
+
+```
+
+# Heterogeneity within brain subset
+
+```{r}
+brain = readRDS("../analysis_output/E8.5/E8.5_brain_cluster.Rds")
+sce$brain <- brain[colnames(sce)]
+```
+
+```{r}
+res_brain = array(NA, dim = c(nrow(sce), 
+                              length(sort(unique(sce$brain))),
+                              3),
+                  dimnames = list(rownames(sce),
+                                  sort(unique(sce$brain)),
+                                  c("prop", "pvalue", "tstat")))
+
+for (gene in sort(rownames(sce))) {
+  print(gene)
+  for (ct_val in sort(unique(sce$brain))) {
+    
+    
+    emb = sce$embryo
+    zs = sce$z
+    ct = sce$brain
+    actual_gene = logcounts(sce)[gene,]
+    smooth_gene = smooth[gene,]
+    
+    df = data.frame(emb = emb,
+                    zs = zs, 
+                    ct = ct,
+                    actual_gene = actual_gene,
+                    smooth_gene = smooth_gene
+    )
+    
+    
+    df <- subset(df, !is.na(ct))
+    
+    df <- subset(df, ct == ct_val)
+    
+    df <- subset(df, !is.na(smooth_gene))
+    
+    # fit a linear model for just the nuisance variables
+    fit2 = lm(actual_gene ~ emb*zs, data = df)
+    
+    fit1 = lm(actual_gene ~ smooth_gene + emb*zs, data = df)
+    
+    val = "smooth_gene"
+    summary(fit1)
+    anova(fit1)
+    ftab = anova(fit2,fit1)
+    ftab
+    ftab$`Pr(>F)`[2]
+    an = anova(fit1)
+    prop_explained = an[val,2]/colSums(an)[2]
+    prop_explained
+    
+    
+    res_brain[gene, ct_val, "prop"] <- prop_explained
+    res_brain[gene, ct_val, "pvalue"] <- ftab$`Pr(>F)`[2]
+    if (val %in% rownames( summary(fit1)$coef)) {
+      res_brain[gene, ct_val, "tstat"] <- summary(fit1)$coef[val, "t value"]
+    }
+  }
+}
+
+
+fdr_brain = apply(res_brain[,,"pvalue"],2,p.adjust, method = "BH")
+fdr_brain[is.na(fdr_brain)] <- 1
+
+# output res as an excel spreadsheet, each cell type is a table
+res_table_file_brain = "../analysis_output/E8.5/heterogeneity_celltypes_tstatistics_brain.xlsx"
+library(openxlsx)
+for (ct in dimnames(res_brain)[[2]]) {
+  if (ct == dimnames(res_brain)[[2]][1]) {
+    wb = createWorkbook()
+  }
+  
+  if (ct == "Forebrain/Midbrain/Hindbrain"){
+    ct_name = "Forebrain_Midbrain_Hindbrain"
+  } else {
+    ct_name = ct
+  }
+  
+  addWorksheet(wb,sheetName = ct_name)
+  
+  res_sub = cbind(res_brain[,ct,], FDR = fdr_brain[,ct])
+  colnames(res_sub) <- c("proportion_variance_explained",
+                         "pvalue",
+                         "tstatistic",
+                         "FDR_qvalue")
+  writeData(wb, 
+            ct_name, 
+            res_sub,
+            rowNames = TRUE)
+  
+  if (ct == rev(dimnames(res_brain)[[2]])[1]) {
+    saveWorkbook(wb,
+                 file = res_table_file_brain,
+                 overwrite = TRUE)
+  }
+}
+
+brain_colours = readRDS("../analysis_output/E8.5/E8.5_brain_subcluster_colours.Rds")
+
+prop_mask_brain = res_brain[,,3] # replaced the 3
+prop_mask_brain[fdr_brain > 0.05] <- NA
+prop_mask_brain <- prop_mask_brain[, apply(prop_mask_brain, 2, function(x) sum(!is.na(x))) != 0]
+prop_mask_brain <- prop_mask_brain[, !colnames(prop_mask_brain) %in% c("Low quality", "ExE endoderm")]
+prop_mask_brain_ordered = prop_mask_brain[, order(apply(prop_mask_brain, 2, quantile, 0.75, na.rm = TRUE), decreasing = TRUE)]
+boxplot(prop_mask_brain_ordered,las = 2, horizontal = FALSE,
+        col = celltype_colours[colnames(prop_mask_brain_ordered)])
+
+prop_mask_brain_ordered_df = reshape::melt(prop_mask_brain_ordered)
+prop_mask_brain_ordered_df$X2 <- factor(as.character(prop_mask_brain_ordered_df$X2),
+                                        levels = colnames(prop_mask_brain_ordered))
+prop_mask_brain_ordered_df$rank <- unsplit(tapply(prop_mask_brain_ordered_df$value, prop_mask_brain_ordered_df$X2, function(x) rank(-x)), prop_mask_brain_ordered_df$X2)
+
+prop_mask_brain_ordered_df <- rbind(prop_mask_brain_ordered_df, 
+                                    subset(prop_mask_ordered_df, X2 == "Forebrain/Midbrain/Hindbrain"))
+
+prop_mask_brain_ordered_df$X2 <- factor(prop_mask_brain_ordered_df$X2,
+                                        levels = c(
+                                          "Forebrain/Midbrain/Hindbrain",
+                                          names(brain_colours)
+                                        ))
+
+brain_colours2 = c(brain_colours, celltype_colours["Forebrain/Midbrain/Hindbrain"])
+
+library(ggbeeswarm)
+g1 = ggplot(subset(prop_mask_brain_ordered_df, value > 0), 
+            aes(x = X2, 
+                y = value, fill = X2)) + 
+  geom_point(aes(colour = X2)) +
+  geom_violin(aes(fill = X2), scale = "width", draw_quantiles = 0.5) +
+  geom_text_repel(aes(label = X1),
+                  data = subset(prop_mask_brain_ordered_df, rank <= 3),
+                  angle = 30,
+                  hjust = 0,
+                  direction = "y",
+                  force = 0.1,
+                  segment.colour = NA,
+  ) +
+  theme_classic() +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = brain_colours2, aesthetics = c("fill", "colour")) + 
+  ylab("t-statistic") + 
+  xlab("") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank()
+  ) +
+  NULL
+g1
+ggsave(g1, file = "../Figures/heterogeneity_celltypes_tstatistics_beeswarm_brain.pdf",
+       height = 6, width = 8)
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

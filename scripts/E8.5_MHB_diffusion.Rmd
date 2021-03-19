@@ -1,0 +1,1548 @@
+---
+title: "E8.5 seqFISH - Diffusion analysis of midbrain/hindbrain boundary"
+author: "Shila Ghazanfar"
+date: "09/09/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 16
+                     fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = TRUE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+library(reshape)
+library(destiny)
+library(DelayedArray)
+library(HDF5Array)
+library(dendextend)
+library(dynamicTreeCut)
+library(GO.db)
+library(org.Mm.eg.db)
+library(stringr)
+library(grDevices)
+```
+
+```{r}
+library(SpatialUtils)
+```
+
+# Load spatial data
+
+```{r}
+sce = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+sce <- reNormalise(sce)
+sce
+```
+
+# Add cell type and clustering information
+
+```{r}
+mapping_dt = readRDS("../analysis_output/E8.5/celltype_annotation_refined.Rds")
+colData(sce) <- cbind(colData(sce), mapping_dt[colnames(sce), setdiff(colnames(mapping_dt),colnames(colData(sce)))])
+```
+
+# Load imputed data
+
+```{r}
+file_combined = "../analysis_output/imputation/combined.h5"
+cnames = readRDS("../analysis_output/imputation/combined_cnames.Rds")
+rnames = readRDS("../analysis_output/imputation/combined_rnames.Rds")
+
+imp <- HDF5Array(filepath = file_combined, name = "logcounts")
+rownames(imp) <- rnames
+colnames(imp) <- cnames
+
+genes_imp = rnames
+```
+
+Load virtually dissected cells
+
+```{r}
+cell_info = rbind(read.delim("../analysis_output/alsu/meta_section_MHB_embryo2z2.tab",
+                             header = TRUE, row.names = 1),
+                  read.delim("../analysis_output/alsu/meta_section_MHB_embryo2z5.tab",
+                             header = TRUE, row.names = 1))
+
+ctype = c("Hindbrain", "Midbrain", "Forebrain")
+
+sce_sub = sce[, rownames(cell_info)[cell_info[,1] %in% c(ctype)]]
+dim(sce_sub)
+sce_sub$brain_region = cell_info[colnames(sce_sub), 1]
+
+table(sce_sub$z)
+```
+
+select genes for diffusion analysis
+
+```{r}
+if (!file.exists("../analysis_output/E8.5/MHB_diffusion_df.Rds")) {
+  
+  stats = modelGeneVar(sce_sub)
+  hvgs = setdiff(rownames(sce_sub), "Xist")
+  print(length(hvgs))
+  
+  
+  out = batchelor::fastMNN(sce_sub,
+                           batch = interaction(sce_sub$embryo, sce_sub$pos, sce_sub$z),
+                           assay.type = "logcounts",
+                           cos.norm = FALSE,
+                           subset.row = setdiff(hvgs, "Xist"),
+                           correct.all = TRUE)
+  reducedDim(sce_sub, "PCA_sub_MNN") <- reducedDim(out, "corrected")
+  
+  brain_corrected = reducedDim(sce_sub, "PCA_sub_MNN")
+  dim(brain_corrected)
+  head(brain_corrected)
+  
+  set.seed(2020)
+  brain_dmap = DiffusionMap(brain_corrected, n_eigs = 20)
+  
+  dmap_dpt = DPT(brain_dmap)[[paste0("DPT", which.max(brain_dmap$DC1))]]
+  
+  dcs <- eigenvectors(brain_dmap)
+  
+  brain_dmap_df = as.data.frame(colData(sce_sub))
+  brain_dmap_df <- cbind(brain_dmap_df, t(logcounts(sce_sub)), dcs)
+  
+  brain_dmap_df$DPT <- dmap_dpt
+  brain_dmap_df$DPT_rank <- rank(brain_dmap_df$DPT)
+  
+  saveRDS(brain_dmap_df, file = "../analysis_output/E8.5/MHB_diffusion_df.Rds")
+} else {
+  brain_dmap_df = readRDS("../analysis_output/E8.5/MHB_diffusion_df.Rds")
+}
+
+
+g = ggplot(brain_dmap_df,
+           aes(x = DC1, 
+               y = DC2)) + 
+  geom_point(aes(colour = rank(DPT)), size = 5) + 
+  theme_classic() + 
+  scale_colour_gradient2(low = "blue", mid = "yellow", high = "red",
+                         midpoint = median(range(rank(brain_dmap_df$DPT)))) +
+  geom_abline(slope = -2.198, intercept = 3.306) +
+  coord_fixed() +
+  theme(legend.position = "bottom") +
+  NULL
+g
+
+
+g = ggplot(brain_dmap_df,
+           aes(x = x_global_affine, 
+               y = -y_global_affine)) + 
+  geom_point(aes(colour = rank(DPT)), size = 3) + 
+  facet_grid(~embryo) +
+  theme_classic() + 
+  scale_colour_gradient2(low = "blue", mid = "yellow", high = "red",
+                         midpoint = median(range(rank(brain_dmap_df$DPT)))) +
+  geom_abline(slope = -2.198, intercept = 3.306) +
+  coord_fixed() +
+  theme(legend.position = "bottom") +
+  NULL
+g
+
+g2 = ggplot(brain_dmap_df,
+            aes(x = x_global_affine, 
+                y = -y_global_affine)) + 
+  geom_point(aes(colour = brain_region), size = 5) + 
+  theme_classic() + 
+  coord_fixed() +
+  theme(legend.position = "bottom") +
+  geom_abline(slope = -2.198, intercept = 3.306) +
+  NULL
+g + g2 + plot_layout(nrow = 2)
+
+g3 = ggplot(brain_dmap_df,
+            aes(x = DPT)) + 
+  geom_density(aes(fill = brain_region), alpha = 0.5) + 
+  theme_classic() + 
+  theme(legend.position = "bottom") +
+  NULL
+g3
+```
+
+select seqFISH genes correlated with pseudotime
+
+```{r}
+dpt_cors_mat = t(cor(as.matrix(brain_dmap_df$DC2), t(logcounts(sce_sub)), method = "spearman"))
+dpt_cors = dpt_cors_mat[,1]
+
+genes = names(which(abs(dpt_cors) > 0.3))
+length(genes)
+
+genes_ordered = intersect(names(sort(abs(dpt_cors), decreasing = TRUE)), genes)
+
+genes_ordered
+
+get_gList = function(genes_ordered) {
+  gList = sapply(genes_ordered, function(gene) {
+    ggplot(brain_dmap_df,
+           aes(x = x_global_affine, 
+               y = -y_global_affine)) + 
+      geom_point(aes(colour = get(gene)), size = 1) + 
+      theme_classic() + 
+      scale_colour_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                             midpoint = 0.5*max(brain_dmap_df[,gene])) +
+      coord_fixed() +
+      theme(legend.position = "bottom") +
+      geom_abline(slope = -2.198, intercept = 3.306) +
+      ggtitle(gene) +
+      xlab("") + 
+      ylab("") +
+      theme(axis.text = element_blank()) +
+      theme(axis.line = element_blank()) +
+      theme(axis.ticks = element_blank()) +
+      theme(legend.position = "none") +
+      NULL
+  }, simplify = FALSE)
+  return(gList)
+}
+
+gList <- get_gList(genes_ordered)
+wrap_plots(gList, nrow = 4)
+
+# now with pseudotime
+dpt_cors_mat = t(cor(as.matrix(brain_dmap_df$DPT), t(logcounts(sce_sub)), method = "spearman"))
+dpt_cors = dpt_cors_mat[,1]
+
+genes = names(which(abs(dpt_cors) > 0.3))
+length(genes)
+
+genes_ordered = intersect(names(sort(abs(dpt_cors), decreasing = TRUE)), genes)
+
+genes_ordered
+
+get_gList = function(genes_ordered) {
+  gList = sapply(genes_ordered, function(gene) {
+    ggplot(brain_dmap_df,
+           aes(x = x_global_affine, 
+               y = -y_global_affine)) + 
+      geom_point(aes(colour = get(gene)), size = 1) + 
+      theme_classic() + 
+      scale_colour_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                             midpoint = 0.5*max(brain_dmap_df[,gene])) +
+      coord_fixed() +
+      theme(legend.position = "bottom") +
+      geom_abline(slope = -2.198, intercept = 3.306) +
+      ggtitle(gene) +
+      xlab("") + 
+      ylab("") +
+      theme(axis.text = element_blank()) +
+      theme(axis.line = element_blank()) +
+      theme(axis.ticks = element_blank()) +
+      theme(legend.position = "none") +
+      NULL
+  }, simplify = FALSE)
+  return(gList)
+}
+
+gList <- get_gList(genes_ordered)
+wrap_plots(gList, nrow = 4)
+```
+
+line plot of expression along the pseudotime, split by dissected brain region.
+
+```{r}
+gList = sapply(genes_ordered, function(gene) {
+  g3 = ggplot(brain_dmap_df,
+              aes(x = -rank(DPT), colour = brain_region == "Hindbrain")) + 
+    geom_point(aes(y = get(gene)), size = 0.1) + 
+    geom_smooth(aes(y = get(gene))) + 
+    theme_classic() + 
+    theme(legend.position = "bottom") +
+    ggtitle(gene) +
+    ylab("") +
+    xlab("Pseudotime") + 
+    NULL
+  return(g3)
+}, simplify = FALSE)
+
+wrap_plots(gList, nrow = 4)
+```
+
+multiple genes line plot
+
+```{r}
+brain_dmap_df_toplot = brain_dmap_df
+brain_dmap_df_toplot$DPT <- brain_dmap_df_toplot$DPT*ifelse(brain_dmap_df_toplot$brain_region == "Midbrain",-1,1)
+g3 = ggplot(brain_dmap_df_toplot,
+            aes(x = -rank(DPT), colour = brain_region)) + 
+  geom_smooth(aes(y = Pax8/max(Pax8)), fill = NA, colour = "black") +
+  geom_smooth(aes(y = Fgf17/max(Fgf17)), fill = NA, colour = "black") +
+  geom_smooth(aes(y = Dusp6/max(Dusp6)), fill = NA, colour = "black") +
+  theme_classic() + 
+  facet_wrap(~brain_region, scales = "free_x") +
+  theme(legend.position = "bottom") +
+  ylab("") +
+  xlab("Pseudotime") + 
+  NULL
+g3
+```
+
+vector field plot of pseudotime in space
+
+```{r}
+out_DPT = plotVectorField(brain_dmap_df$x_global_affine, -brain_dmap_df$y_global_affine,
+                          val = -rank(brain_dmap_df$DPT), nbins = 25, mask = TRUE, direction = -1)
+out_DPT[["plot"]] + coord_fixed() +
+  ggtitle("Pseudotime") +
+  geom_abline(slope = -2.198, intercept = 3.306) +
+  NULL
+
+out = plotVectorField(brain_dmap_df$x_global_affine, -brain_dmap_df$y_global_affine,
+                      val = brain_dmap_df$Otx2, nbins = 25, mask = TRUE, direction = 1)
+g1 = out[["plot"]] + coord_fixed() + ggtitle("Otx2")
+
+out_Gbx2 = plotVectorField(brain_dmap_df$x_global_affine, -brain_dmap_df$y_global_affine,
+                           val = brain_dmap_df$Gbx2, nbins = 25, mask = TRUE, direction = 1)
+g2 = out_Gbx2[["plot"]] + coord_fixed() + ggtitle("Gbx2")
+
+g1 + g2
+
+g1 + geom_arrow(aes(x = x, y = y, mag = magnitude, angle = direction), 
+                data = out[["arrows_df"]], inherit.aes = FALSE,
+                colour = "red")
+```
+
+
+```{r}
+boundary_polygons = getSegmentationVerticesDF(colData(sce),
+                                              xname = "segmentation_vertices_x_global_affine",
+                                              yname = "segmentation_vertices_y_global_affine")
+boundary_polygons <- subset(boundary_polygons, uniqueID %in% rownames(brain_dmap_df) & z == 2)
+
+boundary_polygons$DPT_rank = brain_dmap_df[as.character(boundary_polygons$uniqueID), "DPT_rank"]
+boundary_polygons$DC2 = brain_dmap_df[as.character(boundary_polygons$uniqueID), "DC2"]
+
+g = ggplot(boundary_polygons,
+           aes(x = segmentation_vertices_x_global_affine, 
+               y = -segmentation_vertices_y_global_affine)) + 
+  geom_polygon(aes(group = uniqueID, fill = DPT_rank)) + 
+  theme_classic() + 
+  scale_fill_viridis_c(begin = 0.9, end = 0.3,
+                       labels = c("Low", "High"), 
+                       breaks = range(boundary_polygons$DPT_rank),
+                       limits = range(boundary_polygons$DPT_rank)) +
+  coord_fixed() +
+  theme(legend.position = "bottom") +
+  NULL
+g
+
+scalebar_location = readRDS("../analysis_output/E8.5/MHB_scalebar_location.Rds")
+
+g2 = g +
+  xlab("") + 
+  ylab("") +
+  theme(axis.text = element_blank()) + 
+  theme(axis.ticks = element_blank()) +
+  theme(axis.line = element_blank()) +
+  guides(fill = FALSE) +
+  add_scalebar(dist_um = 50, x = scalebar_location[1], y = scalebar_location[2]) +
+  NULL
+g2
+ggsave(g2, file = "../Figures/MHB_diffusion_noarrows.pdf", height = 4, width = 6)
+
+g3 = g2 + geom_arrow(aes(x = x, y = y, mag = magnitude, angle = direction), 
+                     data = out_DPT[["arrows_df"]], inherit.aes = FALSE,
+                     colour = "black",
+                     show.legend = FALSE) + 
+  NULL
+g3
+ggsave(g3, file = "../Figures/MHB_diffusion_arrows.pdf", height = 4, width = 6)
+
+# get the legend
+g
+
+gg = as_ggplot(get_legend(g +
+                            guides(fill = guide_colourbar(title = ""))))
+print(gg)
+
+ggsave(gg,  file = "../Figures/MHB_diffusion_arrows_legend.pdf",
+       height = 1, width = 3)
+```
+
+DPT plot figure for supp
+
+```{r}
+g = ggplot(brain_dmap_df,
+           aes(x = DC1, 
+               y = DC2)) + 
+  geom_point(aes(colour = rank(DPT)), size = 1, alpha = 0.6) + 
+  theme_classic() + 
+  scale_colour_viridis_c(begin = 0.9, end = 0.3,
+                         labels = c("Low", "High"), 
+                         breaks = range(boundary_polygons$DPT_rank),
+                         limits = range(boundary_polygons$DPT_rank))  +
+  coord_fixed() +
+  theme(legend.position = "bottom") +
+  guides(colour = guide_colourbar(title = "")) +
+  NULL
+g
+
+ggsave(g, file = "../Figures/MHB_diffusion_DC.pdf", height = 5, width = 4)
+
+# DC2 spatial graph
+g = ggplot(boundary_polygons,
+           aes(x = segmentation_vertices_x_global_affine, 
+               y = -segmentation_vertices_y_global_affine)) + 
+  geom_polygon(aes(group = uniqueID, fill = DC2)) + 
+  theme_classic() + 
+  scale_fill_gradient(low = "aquamarine3", high = "darkmagenta",
+                      labels = c("Low", "High"),
+                      breaks = range(boundary_polygons$DC2),
+                      limits = range(boundary_polygons$DC2)) +
+  coord_fixed() +
+  theme(legend.position = "bottom") +
+  xlab("") + 
+  ylab("") +
+  theme(axis.text = element_blank()) + 
+  theme(axis.ticks = element_blank()) +
+  theme(axis.line = element_blank()) +
+  guides(fill = FALSE) +
+  add_scalebar(dist_um = 50, x = scalebar_location[1], y = scalebar_location[2]) +
+  NULL
+g
+ggsave(g, file = "../Figures/MHB_diffusion_DC2.pdf", height = 4, width = 6)
+
+out_DC2 = plotVectorField(brain_dmap_df$x_global_affine, -brain_dmap_df$y_global_affine,
+                          val = rank(brain_dmap_df$DC2), nbins = 25, mask = TRUE, direction = 1)
+
+g3 = g + geom_arrow(aes(x = x, y = y, mag = magnitude, angle = direction), 
+                    data = out_DC2[["arrows_df"]], inherit.aes = FALSE,
+                    colour = "black",
+                    show.legend = FALSE) + 
+  NULL
+g3
+ggsave(g3, file = "../Figures/MHB_diffusion_DC2_arrows.pdf", height = 4, width = 6)
+
+g3_leg = as_ggplot(get_legend(ggplot(data.frame(x=1:10), aes(x = x, y = x, fill = x)) + geom_point() +
+                                scale_fill_gradient(low = "aquamarine3", high = "darkmagenta",
+                                                    labels = c("Low", "High"),
+                                                    breaks = c(1,10),
+                                                    limits = c(1,10)) + 
+                                guides(fill = guide_colourbar(title = ""))))
+g3_leg
+ggsave(g3_leg, file = "../Figures/MHB_diffusion_DC2_legend.pdf", height = 2, width = 1)
+```
+
+# correlation in imputed data
+
+test for significant correlations and select the top 50 absolute largest correlation. calculate abs correlation on either side of the MHB.
+
+```{r}
+cells_M = rownames(subset(brain_dmap_df, brain_region %in% c("Midbrain", "Forebrain")))
+cells_H = rownames(subset(brain_dmap_df, brain_region %in% c("Hindbrain")))
+
+imp_sub = as.matrix(imp[,rownames(brain_dmap_df)])
+imp_sub_M = as.matrix(imp[,cells_M])
+dpt_cors_mat = t(cor(as.matrix(brain_dmap_df[cells_M,]$DPT), t(imp_sub_M), method = "spearman"))
+dpt_cors_M = dpt_cors_mat[,1]
+
+imp_sub_H = as.matrix(imp[,cells_H])
+dpt_cors_mat = t(cor(as.matrix(brain_dmap_df[cells_H,]$DPT), t(imp_sub_H), method = "spearman"))
+dpt_cors_H = dpt_cors_mat[,1]
+
+plot(dpt_cors_M, dpt_cors_H)
+
+hist(dpt_cors_M, 50, prob = TRUE)
+curve(dnorm(x, mean = mean(dpt_cors_M,na.rm = TRUE), sd = sd(dpt_cors_M, na.rm = TRUE)), from = -1, to = 1, col = "blue", add = TRUE)
+
+hist(dpt_cors_H, 50, prob = TRUE)
+curve(dnorm(x, mean = mean(dpt_cors_H,na.rm = TRUE), sd = sd(dpt_cors_H, na.rm = TRUE)), from = -1, to = 1, col = "blue", add = TRUE)
+
+pval_H = apply(imp_sub_H, 1, function(x) {
+  cor.test(brain_dmap_df[cells_H,]$DPT, x, method = "spearman")$p.value  
+})
+pval_adj_H = p.adjust(pval_H, method = "BH")
+
+pval_M = apply(imp_sub_M, 1, function(x) {
+  cor.test(brain_dmap_df[cells_M,]$DPT, x, method = "spearman")$p.value  
+})
+pval_adj_M = p.adjust(pval_M, method = "BH")
+
+table(pval_adj_H < 0.01 & abs(dpt_cors_H) >= 0.5)
+table(pval_adj_M < 0.01 & abs(dpt_cors_M) >= 0.5)
+
+table(pval_adj_H < 0.01 & abs(dpt_cors_H) >= 0.5,
+      pval_adj_M < 0.01 & abs(dpt_cors_M) >= 0.5)
+
+genes_correlated = names(which((pval_adj_H < 0.01 & abs(dpt_cors_H) >= 0.5) |
+                                 (pval_adj_M < 0.01 & abs(dpt_cors_M) >= 0.5)))
+
+genes_correlated_top = names(which((pval_adj_H < 0.01 & rank(-abs(dpt_cors_H)) <= 50) |
+                                     (pval_adj_M < 0.01 & rank(-abs(dpt_cors_M)) <= 50)))
+
+genes_ordered = genes_correlated[1:5]
+
+gList = sapply(genes_ordered, function(gene) {
+  
+  if (gene %in% rownames(sce_sub)) {
+    brain_dmap_df_all = cbind(brain_dmap_df, gene = brain_dmap_df[, gene])
+  } else {
+    brain_dmap_df_all = cbind(brain_dmap_df, gene = imp_sub[gene,])
+  }
+  
+  ggplot(brain_dmap_df_all,
+         aes(x = x_global_affine, 
+             y = -y_global_affine)) + 
+    geom_point(aes(colour = gene), size = 1) + 
+    theme_classic() + 
+    scale_colour_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                           midpoint = 0.5*max(imp_sub[gene,])) +
+    coord_fixed() +
+    theme(legend.position = "bottom") +
+    geom_abline(slope = -2.198, intercept = 3.306) +
+    ggtitle(paste0(gene, ifelse(gene %in% rownames(sce_sub), "", " (Imputed)"))) +
+    xlab("") + 
+    ylab("") +
+    theme(axis.text = element_blank()) +
+    theme(axis.line = element_blank()) +
+    theme(axis.ticks = element_blank()) +
+    theme(legend.position = "none") +
+    NULL
+}, simplify = FALSE)
+
+wrap_plots(gList, nrow = 6)
+```
+
+
+plot their expression along the pseudotime split by dissected region
+
+```{r}
+# expression of these genes along the DPT, for mid and hindbrain separately
+ordered_hb_cells = rev(rownames(sort_df(subset(brain_dmap_df, brain_region == "Hindbrain"), "DPT")))
+ordered_mb_cells = rev(rownames(sort_df(subset(brain_dmap_df, brain_region %in%  c("Midbrain", "Forebrain")), "DPT")))
+
+getHM = function(cells, genes,  ...) {
+  ordered_exp = as.matrix(imp[genes, cells])
+  ordered_relative_exp <- t(apply(ordered_exp,1,function(x) (x-min(x))/max(x - min(x))))
+  ordered_relative_exp_smooth = t(apply(ordered_relative_exp, 1, function(x){
+    loess(x ~ I(1:ncol(ordered_relative_exp)))$fitted
+  }))
+  hm = Heatmap(ordered_relative_exp_smooth,
+               cluster_rows = TRUE,
+               cluster_columns = FALSE,
+               show_column_names = FALSE,
+               col = c("gray75", "cornflowerblue", "black"),
+               clustering_distance_rows = "euclidean",
+               clustering_method_rows = "ward.D2",
+               show_heatmap_legend = FALSE,
+               ...)
+  return(hm)
+}
+
+genesToPlot = c("Fgf8", "Wnt1", "En1")
+genesToPlot = genes_correlated_top
+
+hm = getHM(ordered_mb_cells, genes = genesToPlot, column_title = "Midbrain",
+           row_names_gp = gpar(col = ifelse(genesToPlot %in% rownames(sce), "black", "red")),
+           show_row_names = TRUE,
+           use_raster = TRUE)
+hh = getHM(rev(ordered_hb_cells), genes = genesToPlot, column_title = "Hindbrain",
+           row_names_gp = gpar(col = ifelse(genesToPlot %in% rownames(sce), "black", "red")),
+           show_row_names = TRUE,
+           use_raster = TRUE)
+
+hh + hm
+
+pdf("../Figures/MHB_correlated_ribbon_top50.pdf",
+    height = 15, width = 10)
+print(hh + hm)
+dev.off()
+```
+
+
+MA plot of imputed expression
+
+```{r}
+imp_sub_M = imp[, rownames(subset(brain_dmap_df, brain_region == "Midbrain"))]
+imp_sub_H = imp[, rownames(subset(brain_dmap_df, brain_region == "Hindbrain"))]
+
+imp_mval = rowMeans(imp_sub_M) - rowMeans(imp_sub_H)
+imp_aval = rowMeans(imp_sub_M) + rowMeans(imp_sub_H)
+
+plot(imp_aval, imp_mval, pch = 16, cex = 0.5, col = "grey",
+     ylab = "higher values are in midbrain")
+text(imp_aval[abs(imp_mval) > 0.5],
+     imp_mval[abs(imp_mval) > 0.5],
+     labels = names(imp_aval)[abs(imp_mval) > 0.5])
+```
+
+# Save output
+
+```{r}
+saveRDS(genes_correlated, file = "../analysis_output/E8.5/MHB_diffusion_imputed_top50_correlated_genes.Rds")
+```
+
+Test spatial expression change using scHOT, for seqFISH genes
+
+```{r}
+if (!file.exists("../analysis_output/E8.5/MHB_scHOT_mean_spatial.Rds")) {
+  scHOT_traj <- scHOT_buildFromMatrix(
+    mat = logcounts(sce_sub),
+    cellData = list(colData(sce_sub)),
+    positionType = "spatial",
+    positionColData = c("x_global_affine", "y_global_affine"))
+  scHOT_traj
+  
+  gene_to_test <- as.matrix(rownames(sce_sub))
+  rownames(gene_to_test) <- rownames(sce_sub)
+  
+  scater::plotExpression(scHOT_traj, c("En1"),
+                         exprs_values = "expression", x = "x_global_affine")
+  
+  scHOT_traj@testingScaffold
+  scHOT_traj <- scHOT_addTestingScaffold(scHOT_traj, gene_to_test)
+  scHOT_traj@testingScaffold
+  
+  scHOT_traj@weightMatrix
+  #> <0 x 0 matrix>
+  scHOT_traj <- scHOT_setWeightMatrix(scHOT_traj,
+                                      positionType = "spatial",
+                                      positionColData = c("x_global_affine", "y_global_affine"),
+                                      nrow.out = 100,
+                                      span = 0.1)
+  dim(scHOT_traj@weightMatrix)
+  class(scHOT_traj@weightMatrix)
+  
+  plot(scHOT_traj@weightMatrix[50,])
+  
+  scHOT_traj <- scHOT_calculateGlobalHigherOrderFunction(
+    scHOT_traj,
+    higherOrderFunction = matrixStats::weightedMean,
+    higherOrderFunctionType = "weighted")
+  
+  slot(scHOT_traj, "scHOT_output")
+  apply(assay(scHOT_traj, "expression")[c(gene_to_test),],1,mean)
+  
+  scHOT_traj@scHOT_output$numberPermutations <- 100
+  scHOT_traj@scHOT_output$storePermutations <- TRUE
+  slot(scHOT_traj, "scHOT_output")
+  
+  scHOT_traj <- scHOT_calculateHigherOrderTestStatistics(
+    scHOT_traj,
+    higherOrderSummaryFunction = sd)
+  
+  slot(scHOT_traj, "scHOT_output")
+  
+  system.time(scHOT_traj <- scHOT_performPermutationTest(
+    scHOT_traj,
+    verbose = TRUE,
+    parallel = FALSE))
+  
+  slot(scHOT_traj, "scHOT_output")
+  
+  scHOT_traj <- scHOT_estimatePvalues(scHOT_traj,
+                                      nperm_estimate = 1000,
+                                      maxDist = 1)
+  slot(scHOT_traj, "scHOT_output")
+  
+  plotHigherOrderSequence(scHOT_traj, gene_to_test[1:5,,drop = FALSE])
+  
+  ggplot(as.data.frame(slot(scHOT_traj, "scHOT_output")),
+         aes(x = -log10(pvalPermutations), y = -log10(pvalEstimated))) +
+    geom_point() +
+    theme_classic() +
+    geom_abline(slope = 1, intercept = 0) +
+    xlab("Permutation -log10(p-value)") +
+    ylab("Estimated -log10(p-value)") +
+    NULL
+  
+  saveRDS(scHOT_traj, file = "../analysis_output/E8.5/MHB_scHOT_mean_spatial.Rds")
+} else {
+  scHOT_traj = readRDS("../analysis_output/E8.5/MHB_scHOT_mean_spatial.Rds")
+}
+
+sort_df(as.data.frame(scHOT_traj@scHOT_output), "FDREstimated")[1:10,]
+
+sig_genes = rownames(scHOT_traj)[which(scHOT_traj@scHOT_output$FDREstimated < 0.05)]
+length(sig_genes)
+
+plotHigherOrderSequence(scHOT_traj, as.matrix(sig_genes[1:20]))
+```
+
+Test spatial expression change using scHOT, for imputed genes
+
+```{r}
+imp_sub = imp[,colnames(sce_sub)]
+imp_mean = rowMeans(imp_sub)
+hist(imp_mean,50)
+table(imp_mean > 0.1)
+imputed_genes_to_test = names(which(imp_mean > 0.1))
+length(imputed_genes_to_test)
+
+if (!file.exists("../analysis_output/E8.5/MHB_scHOT_mean_spatial_imputed.Rds")) {
+  
+  scHOT_traj <- scHOT_buildFromMatrix(
+    # mat = logcounts(sce_sub),
+    mat = as.matrix(imp[imputed_genes_to_test, colnames(sce_sub)]),
+    cellData = list(colData(sce_sub)),
+    positionType = "spatial",
+    positionColData = c("x_global_affine", "y_global_affine"))
+  scHOT_traj
+  
+  gene_to_test <- as.matrix(imputed_genes_to_test)
+  rownames(gene_to_test) <- imputed_genes_to_test
+  
+  scater::plotExpression(scHOT_traj, c("En1"),
+                         exprs_values = "expression", x = "x_global_affine")
+  
+  scHOT_traj@testingScaffold
+  scHOT_traj <- scHOT_addTestingScaffold(scHOT_traj, gene_to_test)
+  scHOT_traj@testingScaffold
+  
+  scHOT_traj@weightMatrix
+  
+  scHOT_traj <- scHOT_setWeightMatrix(scHOT_traj,
+                                      positionType = "spatial",
+                                      positionColData = c("x_global_affine", "y_global_affine"),
+                                      nrow.out = 100,
+                                      span = 0.1)
+  dim(scHOT_traj@weightMatrix)
+  class(scHOT_traj@weightMatrix)
+  
+  plot(scHOT_traj@weightMatrix[50,])
+  
+  scHOT_traj <- scHOT_calculateGlobalHigherOrderFunction(
+    scHOT_traj,
+    higherOrderFunction = matrixStats::weightedMean,
+    higherOrderFunctionType = "weighted")
+  
+  slot(scHOT_traj, "scHOT_output")
+  apply(assay(scHOT_traj, "expression")[c(gene_to_test),],1,mean)
+  
+  scHOT_traj@scHOT_output$numberPermutations <- sample(c(100, 0), length(scHOT_traj@scHOT_output$numberPermutations), prob = c(0.1,0.9), replace = TRUE)
+  scHOT_traj@scHOT_output$storePermutations <- TRUE
+  slot(scHOT_traj, "scHOT_output")
+  
+  scHOT_traj <- scHOT_calculateHigherOrderTestStatistics(
+    scHOT_traj,
+    higherOrderSummaryFunction = sd)
+  
+  slot(scHOT_traj, "scHOT_output")
+  
+  system.time(scHOT_traj <- scHOT_performPermutationTest(
+    scHOT_traj,
+    verbose = TRUE,
+    parallel = FALSE))
+  
+  slot(scHOT_traj, "scHOT_output")
+  
+  scHOT_traj <- scHOT_estimatePvalues(scHOT_traj,
+                                      nperm_estimate = 10000,
+                                      maxDist = 10)
+  slot(scHOT_traj, "scHOT_output")
+  
+  saveRDS(scHOT_traj, file = "../analysis_output/E8.5/MHB_scHOT_mean_spatial_imputed.Rds")
+} else {
+  scHOT_traj = readRDS("../analysis_output/E8.5/MHB_scHOT_mean_spatial_imputed.Rds")
+}
+
+plotHigherOrderSequence(scHOT_traj, imputed_genes_to_test[1:5])
+
+ggplot(as.data.frame(slot(scHOT_traj, "scHOT_output")),
+       aes(x = -log10(pvalPermutations), y = -log10(pvalEstimated))) +
+  geom_point() +
+  theme_classic() +
+  geom_abline(slope = 1, intercept = 0) +
+  xlab("Permutation -log10(p-value)") +
+  ylab("Estimated -log10(p-value)") +
+  NULL
+
+rev_df = function(df) {df[rev(1:nrow(df)),]}
+sort_df(as.data.frame(scHOT_traj@scHOT_output), "FDREstimated")[1:10,]
+rev_df(sort_df(as.data.frame(scHOT_traj@scHOT_output), "higherOrderStatistic"))[1:10,]
+
+sig_genes = rownames(scHOT_traj)[which(scHOT_traj@scHOT_output$FDREstimated < 0.05)]
+length(sig_genes)
+
+plotHigherOrderSequence(scHOT_traj, as.matrix(sig_genes[1:20]))
+```
+
+# Graph clustered expression of differentially expressed genes in space
+
+```{r}
+scHOT_traj = readRDS("../analysis_output/E8.5/MHB_scHOT_mean_spatial.Rds")
+
+sig_genes = rownames(scHOT_traj)[scHOT_traj@scHOT_output$FDREstimated < 0.05]
+length(sig_genes)
+
+hist(scHOT_traj@scHOT_output$pvalEstimated, 50)
+
+sig_genes
+
+scHOT2 = scHOT_traj
+dim(scHOT2)
+scHOT2@testingScaffold <- scHOT2@testingScaffold[sig_genes,,drop = FALSE]
+scHOT2 <- scHOT_setWeightMatrix(scHOT2,
+                                positionType = "spatial",
+                                positionColData = c("x_global_affine", "y_global_affine"),
+                                span = 0.1)
+dim(scHOT2@weightMatrix)
+dim(scHOT2@testingScaffold)
+scHOT2 <- scHOT_stripOutput(scHOT2)
+
+scHOT2 <- scHOT_calculateHigherOrderTestStatistics(
+  scHOT2,
+  higherOrderSummaryFunction = sd)
+length(scHOT2@scHOT_output$higherOrderSequence[[1]])
+
+mean_mat = do.call(rbind,scHOT2@scHOT_output$higherOrderSequence)
+rownames(mean_mat) <- rownames(scHOT2@scHOT_output)
+colnames(mean_mat) <- colnames(scHOT2)
+
+plot(colData(scHOT2)$x_global_affine, mean_mat[12,])
+
+mean_mat_norm = apply(mean_mat, 1, function(x) (x - min(x))/(max(x) - min(x)))
+
+hc = hclust(dist(mean_mat, method = "euclidean"), method = "ward.D2")
+plot(hc)
+mean_groups = cutree(hc, 15)
+sort(mean_groups)
+table(mean_groups)
+
+mean_mat_norm_clust = t(apply(mean_mat_norm,1,function(x) tapply(x, mean_groups, mean)))
+colnames(mean_mat_norm_clust) <- paste0("cluster_", colnames(mean_mat_norm_clust))
+mean_mat_norm_clust_df = as.data.frame(mean_mat_norm_clust)
+mean_mat_norm_clust_df$x_global_affine <- sce_sub[, rownames(mean_mat_norm_clust_df)]$x_global_affine
+mean_mat_norm_clust_df$y_global_affine <- sce_sub[, rownames(mean_mat_norm_clust_df)]$y_global_affine
+
+brain_smooth_df = as.data.frame(mean_mat_norm)
+brain_smooth_df$x_global_affine <- sce_sub[, rownames(brain_smooth_df)]$x_global_affine
+brain_smooth_df$y_global_affine <- sce_sub[, rownames(brain_smooth_df)]$y_global_affine
+
+get_gList = function(genes_ordered, df) {
+  gList = sapply(genes_ordered, function(gene) {
+    
+    if (!gene %in% colnames(df)) {
+      df[, gene] <- imp[gene ,rownames(df)]
+      print("imputed!")
+    }
+    
+    ggplot(df,
+           aes(x = x_global_affine, 
+               y = -y_global_affine)) + 
+      geom_point(aes(colour = get(gene)), size = 1) + 
+      theme_classic() + 
+      scale_colour_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                             midpoint = 0.5*max(df[,gene])) +
+      coord_fixed() +
+      theme(legend.position = "bottom") +
+      ggtitle(gene) +
+      xlab("") + 
+      ylab("") +
+      theme(axis.text = element_blank()) +
+      theme(axis.line = element_blank()) +
+      theme(axis.ticks = element_blank()) +
+      theme(legend.position = "none") +
+      NULL
+  }, simplify = FALSE)
+  return(gList)
+}
+
+
+i = 1
+gList1 = get_gList(names(which(mean_groups == i)), df = brain_smooth_df)
+gList2 = get_gList(names(which(mean_groups == i)), df = brain_dmap_df)
+length(gList1)
+wrap_plots(c(gList2, gList1), ncol = length(gList1))
+
+get_gList_poly = function(genes_ordered, df) {
+  gList = sapply(genes_ordered, function(gene) {
+    
+    imputed = FALSE
+    
+    if (!gene %in% colnames(df)) {
+      df[, gene] <- imp[gene ,rownames(df)]
+      print("imputed!")
+      imputed <- TRUE
+    }
+    
+    boundary_polygons = getSegmentationVerticesDF(colData(sce)[rownames(df),],
+                                                  xname = "segmentation_vertices_x_global_affine",
+                                                  yname = "segmentation_vertices_y_global_affine")
+    boundary_polygons <- subset(boundary_polygons, z == 2)
+    
+    boundary_polygons[,gene] <- df[as.character(boundary_polygons$uniqueID), gene]
+    
+    
+    ggplot(boundary_polygons,
+           aes(x = segmentation_vertices_x_global_affine, 
+               y = -segmentation_vertices_y_global_affine)) + 
+      geom_polygon(aes(fill = get(gene), group = uniqueID), size = 1) + 
+      theme_classic() + 
+      scale_fill_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                           midpoint = 0.5*max(df[,gene])) +
+      coord_fixed() +
+      theme(legend.position = "bottom") +
+      ggtitle(gene) +
+      xlab("") + 
+      ylab("") +
+      theme(axis.text = element_blank()) +
+      theme(axis.line = element_blank()) +
+      theme(axis.ticks = element_blank()) +
+      theme(legend.position = "none") +
+      theme(plot.title = element_text(hjust = 0.5, colour = ifelse(imputed, "red", "black"),
+                                      size = 25)) +
+      add_scalebar(dist_um = 50, x = scalebar_location[1], y = scalebar_location[2]) +
+      NULL
+  }, simplify = FALSE)
+  return(gList)
+}
+
+
+gList = get_gList_poly(colnames(mean_mat_norm_clust), df = mean_mat_norm_clust_df)
+split(names(mean_groups), mean_groups)
+
+ggsave(wrap_plots(gList, ncol = 5), file = "../Figures/MHB_scHOT_spatial_mean_clusters.pdf", height = 8, width = 10)
+write.table(sort(mean_groups), file = "../Figures/MHB_scHOT_spatial_mean_clusters.txt",
+            quote = FALSE, col.names = FALSE)
+
+selectedGenes = sort(c("Fgf8","En1","Pax2","Wnt1","Shh","Foxa2","Fgf17","Hes3","Meis2","Otx2","Pou3f1","Abcc4","Pax8","Hes5"))
+
+gList2 = get_gList_poly(selectedGenes, df = brain_dmap_df)
+length(gList2)
+wrap_plots(gList2, ncol = 7)
+
+sapply(names(gList2), function(gene){
+  ggsave(gList2[[gene]], file = paste0("../Figures/MHB_expression_", gene, ".pdf"),
+         height = 3, width = 4)
+})
+
+```
+
+# Graph clustered expression of differentially expressed genes in space for imputed
+
+```{r}
+scHOT_traj = readRDS("../analysis_output/E8.5/MHB_scHOT_mean_spatial_imputed.Rds")
+
+imp_scHOT_df = data.frame(
+  gene = rownames(scHOT_traj),
+  global = scHOT_traj@scHOT_output$globalHigherOrderFunction,
+  stat = scHOT_traj@scHOT_output$higherOrderStatistic,
+  FDR = scHOT_traj@scHOT_output$FDREstimated,
+  rank = rank(-scHOT_traj@scHOT_output$higherOrderStatistic)
+)
+
+g = ggplot(imp_scHOT_df, aes(x = global, y = stat, 
+                             # colour = interaction(FDR < 0.05, rank <= 500)
+                             colour = rank <= 500
+)) +
+  geom_point() + 
+  geom_text_repel(aes(label = gene), data = subset(imp_scHOT_df, rank <= 20),
+                  colour = "black", fontface = "italic") + 
+  theme_classic() + 
+  xlab("Mean expression") + 
+  ylab("Test statistic") +
+  scale_colour_manual(values = c("FALSE" = "grey",
+                                 # "TRUE.FALSE" = "coral",
+                                 "TRUE" = "red"),
+                      labels = c("Other",
+                                 # "FDR-adjusted P-value < 0.05",
+                                 "FDR-adjusted P-value < 0.05 and within top 500")) +
+  theme(legend.position = "bottom") +
+  guides(colour = guide_legend(title = "", ncol = 1, reverse = TRUE)) +
+  NULL
+g
+ggsave(g, file = "../Figures/MHB_spatial_mean_selected_imputed.pdf",
+       height = 5, width = 6)
+
+plot(scHOT_traj@scHOT_output$globalHigherOrderFunction, scHOT_traj@scHOT_output$higherOrderStatistic, col = ifelse(scHOT_traj@scHOT_output$FDREstimated < 0.05, "red","black"))
+
+plot(scHOT_traj@scHOT_output$globalHigherOrderFunction, scHOT_traj@scHOT_output$higherOrderStatistic, col = ifelse(rank(-scHOT_traj@scHOT_output$higherOrderStatistic) <= 500, "red","black"))
+
+
+# select the top 500 significant genes
+sig_genes = rownames(scHOT_traj)[rank(-scHOT_traj@scHOT_output$higherOrderStatistic) <= 500 & scHOT_traj@scHOT_output$FDREstimated < 0.05]
+length(sig_genes)
+
+hist(scHOT_traj@scHOT_output$pvalEstimated, 50)
+
+sig_genes
+
+if (!file.exists("../analysis_output/E8.5/MHB_scHOT_mean_spatial_imputed_2.Rds")) {
+  
+  # statistically significant genes
+  sig_genes = rownames(scHOT_traj)[scHOT_traj@scHOT_output$FDREstimated < 0.05]
+  length(sig_genes)
+  # scHOT2 = scHOT_traj[,colData(scHOT_traj)$z == 2]
+  scHOT2 = scHOT_traj
+  dim(scHOT2)
+  # scHOT2 <- scHOT2[sig_genes,]
+  scHOT2@testingScaffold <- scHOT2@testingScaffold[sig_genes,,drop = FALSE]
+  scHOT2 <- scHOT_setWeightMatrix(scHOT2,
+                                  positionType = "spatial",
+                                  positionColData = c("x_global_affine", "y_global_affine"),
+                                  # nrow.out = 100,
+                                  span = 0.1)
+  dim(scHOT2@weightMatrix)
+  dim(scHOT2@testingScaffold)
+  scHOT2 <- scHOT_stripOutput(scHOT2)
+  
+  scHOT2 <- scHOT_calculateHigherOrderTestStatistics(
+    scHOT2,
+    higherOrderSummaryFunction = sd)
+  length(scHOT2@scHOT_output$higherOrderSequence[[1]])
+  
+  saveRDS(scHOT2, file = "../analysis_output/E8.5/MHB_scHOT_mean_spatial_imputed_2.Rds")
+} else {
+  scHOT2 = readRDS("../analysis_output/E8.5/MHB_scHOT_mean_spatial_imputed_2.Rds")
+  
+}
+
+mean_mat = do.call(rbind,scHOT2@scHOT_output$higherOrderSequence)
+rownames(mean_mat) <- rownames(scHOT2@scHOT_output)
+colnames(mean_mat) <- colnames(scHOT2)
+
+mean_mat <- mean_mat[sig_genes,]
+dim(mean_mat)
+
+plot(colData(scHOT2)$x_global_affine, mean_mat[12,])
+
+mean_mat_norm = apply(mean_mat, 1, function(x) (x - min(x))/(max(x) - min(x)))
+mean_mat_norm_t = t(mean_mat_norm)
+
+hc = hclust(dist(mean_mat_norm_t, method = "maximum"), method = "ward.D2")
+
+hcClustDynamic = cutreeDynamic(
+  hc, 
+  minClusterSize = 10, 
+  method = "tree",
+  deepSplit = TRUE,
+  useMedoids = FALSE
+)
+kk = length(unique(hcClustDynamic))-1
+kk
+mean_groups = cutree(hc, k = kk)
+sort(mean_groups)
+sort(table(mean_groups))
+
+hc_cells = hclust(dist(t(mean_mat_norm_t), method = "maximum"), method = "ward.D2")
+
+hcClustDynamic = cutreeDynamic(
+  hc_cells, 
+  minClusterSize = 10, 
+  method = "tree",
+  deepSplit = TRUE,
+  useMedoids = FALSE
+)
+kk_cells = length(unique(hcClustDynamic))-1
+kk_cells
+mean_groups_cells = cutree(hc_cells, k = kk_cells)
+sort(mean_groups_cells)
+sort(table(mean_groups_cells))
+
+mean_mat_norm_clust = t(apply(mean_mat_norm,1,function(x) tapply(x, mean_groups, mean)))
+colnames(mean_mat_norm_clust) <- paste0("cluster_", colnames(mean_mat_norm_clust))
+mean_mat_norm_clust_df = as.data.frame(mean_mat_norm_clust)
+mean_mat_norm_clust_df$x_global_affine <- sce_sub[, rownames(mean_mat_norm_clust_df)]$x_global_affine
+mean_mat_norm_clust_df$y_global_affine <- sce_sub[, rownames(mean_mat_norm_clust_df)]$y_global_affine
+
+brain_smooth_df = as.data.frame(mean_mat_norm)
+brain_smooth_df$x_global_affine <- sce_sub[, rownames(brain_smooth_df)]$x_global_affine
+brain_smooth_df$y_global_affine <- sce_sub[, rownames(brain_smooth_df)]$y_global_affine
+
+get_gList = function(genes_ordered, df) {
+  gList = sapply(genes_ordered, function(gene) {
+    
+    if (!gene %in% colnames(df)) {
+      df[, gene] <- imp[gene ,rownames(df)]
+      print("imputed!")
+    }
+    
+    ggplot(df,
+           aes(x = x_global_affine, 
+               y = -y_global_affine)) + 
+      geom_point(aes(colour = get(gene)), size = 1) + 
+      theme_classic() + 
+      scale_colour_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                             midpoint = 0.5*max(df[,gene])) +
+      coord_fixed() +
+      theme(legend.position = "bottom") +
+      # geom_abline(slope = -2.198, intercept = 3.306) +
+      ggtitle(gene) +
+      xlab("") + 
+      ylab("") +
+      theme(axis.text = element_blank()) +
+      theme(axis.line = element_blank()) +
+      theme(axis.ticks = element_blank()) +
+      theme(legend.position = "none") +
+      NULL
+  }, simplify = FALSE)
+  return(gList)
+}
+
+
+i = 1
+names(which(mean_groups == i))
+gList1 = get_gList(names(which(mean_groups == i)), df = brain_smooth_df)
+gList2 = get_gList(names(which(mean_groups == i)), df = brain_dmap_df)
+length(gList1)
+
+get_gList_poly = function(genes_ordered, df) {
+  gList = sapply(genes_ordered, function(gene) {
+    
+    imputed = FALSE
+    
+    if (!gene %in% colnames(df)) {
+      df[, gene] <- imp[gene ,rownames(df)]
+      print("imputed!")
+      imputed <- TRUE
+    }
+    
+    boundary_polygons = getSegmentationVerticesDF(colData(sce)[rownames(df),],
+                                                  xname = "segmentation_vertices_x_global_affine",
+                                                  yname = "segmentation_vertices_y_global_affine")
+    boundary_polygons <- subset(boundary_polygons, z == 2)
+    
+    boundary_polygons[,gene] <- df[as.character(boundary_polygons$uniqueID), gene]
+    
+    
+    ggplot(boundary_polygons,
+           aes(x = segmentation_vertices_x_global_affine, 
+               y = -segmentation_vertices_y_global_affine)) + 
+      geom_polygon(aes(fill = get(gene), group = uniqueID), size = 1) + 
+      theme_classic() + 
+      scale_fill_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                           midpoint = 0.5*max(df[,gene])) +
+      coord_fixed() +
+      theme(legend.position = "bottom") +
+      # geom_abline(slope = -2.198, intercept = 3.306) +
+      ggtitle(gene) +
+      theme(plot.title = element_text(face = "italic")) +
+      xlab("") + 
+      ylab("") +
+      theme(axis.text = element_blank()) +
+      theme(axis.line = element_blank()) +
+      theme(axis.ticks = element_blank()) +
+      theme(legend.position = "none") +
+      theme(plot.title = element_text(hjust = 0.5, colour = ifelse(imputed, "red", "black"),
+                                      size = 25)) +
+      # add_scalebar(dist_um = 50, x = scalebar_location[1], y = scalebar_location[2]) +
+      NULL
+  }, simplify = FALSE)
+  return(gList)
+}
+
+
+gList = get_gList_poly(colnames(mean_mat_norm_clust), df = mean_mat_norm_clust_df)
+length(gList)
+split(names(mean_groups), mean_groups)
+```
+
+Generate a spatial heatmap of the MHB
+
+```{r}
+length(hc$labels)
+length(hc_cells$labels)
+length(gList)
+
+length(mean_groups)
+length(mean_groups_cells)
+
+dim(mean_mat_norm)
+
+mean_groups_10 = cutree(hc, k = 10)
+# extract which of the 10 clusters the 25 come from
+tab = unclass(table(mean_groups, mean_groups_10))
+group_10_membership = apply(tab,1,function(x) which(x != 0))
+
+mean_mat_norm_clust = sumCountsAcrossFeatures(t(mean_mat_norm),
+                                              mean_groups,
+                                              average = TRUE)
+
+mean_mat_norm_clust_clust = assay(sumCountsAcrossCells(mean_mat_norm_clust,
+                                                       mean_groups_cells,
+                                                       average = TRUE), "average")
+
+mean_mat_norm_clust_clust
+
+dim(mean_mat_norm_clust_clust)
+
+plot_w = 25
+plot_h = 12
+
+h = Heatmap(mean_mat_norm_clust_clust,
+            col = c("gray75", "cornflowerblue", "black"),
+            use_raster = TRUE,
+            show_row_names = TRUE,
+            show_column_names = FALSE,
+            row_names_side = "left",
+            show_heatmap_legend = FALSE,
+            clustering_distance_rows = "maximum",
+            cluster_columns = TRUE,
+            right_annotation = rowAnnotation(
+              number_genes = anno_barplot(as.numeric(unclass(table(mean_groups)))),
+              annotation_width = unit(0.5, "in"),
+              show_annotation_name = FALSE),
+            top_annotation = columnAnnotation(
+              number_cells = anno_barplot(as.numeric(unclass(table(mean_groups_cells)))),
+              annotation_height = unit(0.5, "in"),
+              show_annotation_name = FALSE),
+            column_split = 8,
+            left_annotation = HeatmapAnnotation(
+              ggplot_row = anno_empty(width = unit(1, "in")),
+              which = "row",
+              subclass = anno_text(group_10_membership)
+            ),
+            bottom_annotation = HeatmapAnnotation(
+              ggplot_column = anno_empty(height = unit(1, "in")), which = "column")
+)
+
+row_order(h)
+column_order(h)
+
+gList_cells = lapply(column_order(h), function(x) {
+  selectedCells = names(mean_groups_cells)[mean_groups_cells %in% x]
+  g = ggplot(boundary_polygons,
+             aes(x = segmentation_vertices_x_global_affine, 
+                 y = -segmentation_vertices_y_global_affine)) + 
+    geom_polygon(aes(fill = uniqueID %in% selectedCells, group = uniqueID), size = 0,
+                 colour = NA) + 
+    theme_classic() + 
+    scale_fill_manual(values = c("TRUE" = "black", "FALSE" = "darkgrey")) +
+    coord_fixed() +
+    theme(legend.position = "none") +
+    xlab("") + 
+    ylab("") +
+    theme(axis.text = element_blank()) +
+    theme(axis.line = element_blank()) +
+    theme(axis.ticks = element_blank()) +
+    theme(plot.margin = unit(c(0,0,0,0), "in")) + 
+    theme(panel.background = element_rect(fill = "transparent",colour = NA),
+          plot.background = element_rect(fill = "transparent",colour = NA)) +
+    NULL
+  return(g)
+})
+
+n_cells = unlist(lapply(column_order(h), length))
+n_cells_min = min(n_cells)
+widths_cells = unlist(sapply(n_cells, function(x){
+  flank_width = (x - n_cells_min)/2
+  c(flank_width,n_cells_min,flank_width)
+},simplify = FALSE))
+
+gList_cells_flanking = unlist(lapply(gList_cells, function(x){
+  list(plot_spacer(),x,plot_spacer())
+}), recursive = FALSE)
+
+g_cells = wrap_plots(gList_cells_flanking, nrow = 1,
+                     widths = widths_cells) & theme(plot.background = element_rect(fill = "transparent", colour = NA))
+
+ggsave(g_cells, file = "../Figures/tmp.pdf", width = plot_w, height = 3, units = "in", bg = "transparent")
+
+
+gList_clean = lapply(gList[row_order(h)],function(x) {
+  x +
+    theme(plot.margin = unit(c(0,0.1,0,0), "in")) +
+    ggtitle("") + 
+    theme(panel.background = element_rect(fill = "transparent",colour = NA),
+          plot.background = element_rect(fill = "transparent",colour = NA)) +
+    scale_x_reverse() + 
+    scale_y_reverse() +
+    NULL
+})
+
+g_genes = wrap_plots(gList_clean, ncol = 1) & theme(plot.background = element_rect(fill = "transparent", colour = NA))
+
+g_genes_2 = wrap_plots(gList_clean, ncol = 5) & theme(plot.background = element_rect(fill = "transparent", colour = NA))
+ggsave(g_genes_2, file = "../Figures/tmp_g.pdf", units = "in", height = 10, width = 15,
+       bg = "transparent") 
+
+
+
+pdf(file = "../Figures/MHB_heatmap.pdf",
+    width = plot_w, height = plot_h)
+h
+decorate_annotation("ggplot_row", {
+  vp = current.viewport()$name
+  print(g_genes, vp = vp)
+})
+for (i in 1:length(gList_cells)) {
+  decorate_annotation("ggplot_column", {
+    vp = current.viewport()$name
+    print(gList_cells[[i]], vp = vp, max.levels = NULL)
+  }, slice = i)
+}
+dev.off()
+```
+
+Do GO test for the top 500 genes
+
+```{r}
+if (!file.exists("../analysis_output/E8.5/GO_list.Rds")) {
+  keys = keys(org.Mm.eg.db)
+  columns(org.Mm.eg.db)
+  GO_info = AnnotationDbi::select(org.Mm.eg.db, keys=keys, columns = c("SYMBOL", "GO"))
+  
+  keep = GO_info$SYMBOL %in% rnames
+  table(keep)
+  GO_info_filt = GO_info[keep,]
+  
+  # at least 10 genes in the term and less than 500
+  allTerms = names(which(table(GO_info_filt$GO) >= 10 & table(GO_info_filt$GO) <= 500))
+  
+  GO_info_terms = AnnotationDbi::select(GO.db, columns = columns(GO.db), keys = allTerms)
+  rownames(GO_info_terms) <- GO_info_terms$GOID
+  
+  allTermNames = GO_info_terms[allTerms, "TERM"]
+  names(allTermNames) <- allTerms
+  
+  GO_list = sapply(allTerms, function(term) {
+    print(term)
+    genes = GO_info_filt[GO_info_filt$GO == term, "SYMBOL"]
+    return(sort(unique(genes[!is.na(genes)])))
+  }, simplify = FALSE)
+  names(GO_list) <- allTermNames
+  
+  saveRDS(GO_list, file = "../analysis_output/E8.5/GO_list.Rds")
+} else {
+  GO_list = readRDS("../analysis_output/E8.5/GO_list.Rds")
+}
+
+GO_list_sig = GO_list[unlist(lapply(GO_list, function(x) any(x %in% sig_genes)))]
+length(GO_list_sig)
+
+GO_testing_genes = split(names(mean_groups_10), mean_groups_10)
+names(GO_testing_genes) <- paste0("cluster_", names(GO_testing_genes))
+GO_testing_genes[["MHB_all"]] <- sig_genes
+length(GO_testing_genes)
+head(names(GO_testing_genes))
+GO_res_list = lapply(GO_testing_genes, function(set){
+  genesetGOtest(set, rnames, GO_list_sig)
+})
+
+ntop = 20
+gList_GO = lapply(GO_res_list, function(pval) {
+  df = data.frame(term = factor(names(pval), levels = c(names(pval), "")),
+                  pval = pval,
+                  qval = p.adjust(pval, method = "BH"))
+  df$label = df$term
+  df$label[pval != 1] <- ""
+  df_sorted = sort_df(df, "pval")[1:ntop,]
+  df_sorted$term = factor(df_sorted$term, levels =  rev(df_sorted$term))
+  
+  g = ggplot(df_sorted, aes(x = term, y = -log10(pval), fill = qval < 0.05)) +
+    theme_classic() +
+    geom_col() +
+    coord_flip() +
+    xlab("") +
+    ylab(expression("-log10(P-value)")) +
+    scale_fill_manual(values = c("TRUE" = "dimgrey", "FALSE" = "peachpuff")) +
+    theme(legend.position = "none") +
+    theme(axis.text.y = element_text(size = 10)) +
+    theme(title = element_text(hjust = 0.5)) +
+    scale_x_discrete(labels = function(x) str_wrap(x, width = 30)) +
+    NULL
+  return(g)
+  
+})
+gList_GO[[10]]
+
+mean_mat_norm_clust_10 = t(apply(mean_mat_norm,1,function(x) tapply(x, mean_groups_10, mean)))
+colnames(mean_mat_norm_clust_10) <- paste0("cluster ", colnames(mean_mat_norm_clust_10))
+mean_mat_norm_clust_df_10 = as.data.frame(mean_mat_norm_clust_10)
+mean_mat_norm_clust_df_10$x_global_affine <- sce_sub[, rownames(mean_mat_norm_clust_df_10)]$x_global_affine
+mean_mat_norm_clust_df_10$y_global_affine <- sce_sub[, rownames(mean_mat_norm_clust_df_10)]$y_global_affine
+
+gList_10 = get_gList_poly(colnames(mean_mat_norm_clust_10), df = mean_mat_norm_clust_df_10)
+length(gList_10)
+
+
+gList_both = sapply(1:10, function(i) wrap_plots(gList_10[[i]], gList_GO[[i]], nrow = 2, byrow = TRUE,
+                                                 heights = c(1,5)), simplify = FALSE)
+g = wrap_plots(gList_both, nrow = 2, ncol = 5)
+ggsave(g, file = "../Figures/MHB_GO_enrichment.pdf",
+       height = 15, width = 30)
+
+# dot plot of all terms
+GO_df = do.call(rbind, sapply(1:11, function(i) {
+  pval = GO_res_list[[i]]
+  sample = paste0("cluster ",i)
+  if (i == 11) {
+    sample = "all"
+  }
+  df = data.frame(term = factor(names(pval), levels = c(names(pval), "")),
+                  pval = pval,
+                  qval = p.adjust(pval, method = "BH"))
+  df$label = df$term
+  df$label[pval != 1] <- ""
+  df_sorted = sort_df(df, "pval")#[1:ntop,]
+  df_sorted$rank = rank(df_sorted$pval)
+  df_sorted$term = factor(df_sorted$term, levels =  rev(df_sorted$term))
+  df_sorted$cluster = sample
+  return(df_sorted)
+}, simplify = FALSE))
+
+any_sig_terms = sort(unique(subset(GO_df, rank <= 20 & qval < 0.05 & cluster != "all")$term))
+length(any_sig_terms)
+
+GO_df_sub = subset(GO_df, term %in% any_sig_terms)
+
+GO_sub_raw = cast(GO_df_sub, term ~ cluster, value = "pval")
+GO_sub = -log10(as.matrix(GO_sub_raw[,-1]))
+colnames(GO_sub) <- colnames(GO_sub_raw)[2:ncol(GO_sub_raw)]
+rownames(GO_sub) <- GO_sub_raw[,1]
+
+order_terms = rownames(GO_sub)[hclust(dist(GO_sub))$order]
+order_clusters = colnames(GO_sub)[hclust(dist(t(GO_sub)))$order]
+
+GO_df_sub$term <- factor(GO_df_sub$term,
+                         levels = rev(order_terms))
+GO_df_sub$cluster <- factor(GO_df_sub$cluster,
+                            levels = order_clusters)
+
+g = ggplot(GO_df_sub, aes(x = cluster, y = term)) + 
+  geom_point(aes(size = -log10(pval), colour = qval < 0.05)) + 
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  scale_colour_manual(values = c("FALSE" = "grey", "TRUE" = "black"),
+                      labels = c("FDR-adjusted\nP-value > 0.05",
+                                 "FDR-adjusted\nP-value < 0.05")) +
+  guides(colour = guide_legend(title = "")) +
+  guides(size = guide_legend(title = "-log10(P-value)")) +
+  theme(legend.position = "right") +
+  xlab("") +
+  ylab("") +
+  NULL
+ggsave(g, file = "../Figures/MHB_GO_enrichment_heatmap.pdf",
+       height = 15, width = 10)
+```
+
+```{r}
+gList_500 = get_gList_poly(sig_genes, df = brain_dmap_df)
+saveRDS(gList_500, file = "../analysis_output/E8.5/MHB_sig_genes_ggplot.Rds")
+
+imp_scHOT_df_2 = sort_df(cbind(imp_scHOT_df[sig_genes,], mean_groups, mean_groups_10),"rank")
+write.table(imp_scHOT_df_2, file = "../Figures/MHB_imputed_sig_top500.tsv",
+            quote = FALSE, sep = "\t", row.names = FALSE, col.names = TRUE)
+
+gList_20 = gList_500[rownames(subset(imp_scHOT_df_2, rank <= 20))]
+gList_20[[1]] <- gList_20[[1]] + add_scalebar(dist_um = 50, x = scalebar_location[1], y = scalebar_location[2])
+g = wrap_plots(gList_20, nrow = 4)
+ggsave(g, file = "../Figures/MHB_sig_top20.pdf", height = 10, width = 12)
+
+
+genesForPanel = c("Fgf8", "Fgf17", "Pax8", "Msx3", "Shh", "Foxa2", "Wnt1", "En1", "Ezr", "Efna2", "Efnb1", "Lmo1")
+
+gList_for_panel =  get_gList_poly(genesForPanel, df = brain_dmap_df)
+gList_for_panel[[1]] <- gList_for_panel[[1]] + add_scalebar(dist_um = 50, x = scalebar_location[1], y = scalebar_location[2])
+g = wrap_plots(gList_for_panel, nrow = 3, byrow = FALSE)
+g
+ggsave(g, file = "../Figures/MHB_sig_panel.pdf", height = 10, width = 12)
+```
+
+# Make subdissection plots for MA-plot
+
+```{r}
+sce$brain_region <- df[colnames(sce), "brain_region"]
+
+boundary_polygons = getSegmentationVerticesDF(colData(sce)[rownames(df),],
+                                              xname = "segmentation_vertices_x_global_affine",
+                                              yname = "segmentation_vertices_y_global_affine",
+                                              othercols = c("z", "uniqueID", "embryo", "brain_region"))
+boundary_polygons <- subset(boundary_polygons, z == 2)
+
+g1 =  ggplot(boundary_polygons,
+             aes(x = segmentation_vertices_x_global_affine, 
+                 y = -segmentation_vertices_y_global_affine)) + 
+  geom_polygon(aes(fill = brain_region, group = uniqueID), size = 1) + 
+  theme_classic() + 
+  scale_fill_manual(values = c(Midbrain = "orange", Forebrain = "orange", Hindbrain = "grey")) +
+  coord_fixed() +
+  theme(legend.position = "bottom") +
+  xlab("") + 
+  ylab("") +
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(legend.position = "none") +
+  theme(plot.title = element_text(hjust = 0.5, colour = ifelse(imputed, "red", "black"),
+                                  size = 25)) +
+  NULL
+g1
+
+g2 =  ggplot(boundary_polygons,
+             aes(x = segmentation_vertices_x_global_affine, 
+                 y = -segmentation_vertices_y_global_affine)) + 
+  geom_polygon(aes(fill = brain_region, group = uniqueID), size = 1) + 
+  theme_classic() + 
+  scale_fill_manual(values = c(Midbrain = "grey", Forebrain = "grey", Hindbrain = "purple")) +
+  coord_fixed() +
+  theme(legend.position = "bottom") +
+  xlab("") + 
+  ylab("") +
+  theme(axis.text = element_blank()) +
+  theme(axis.line = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  theme(legend.position = "none") +
+  theme(plot.title = element_text(hjust = 0.5, colour = ifelse(imputed, "red", "black"),
+                                  size = 25)) +
+  NULL
+g2
+
+ggsave(g1, file = "../Figures/MHB_selection_midbrain.pdf",
+       height = 3, width = 4)
+ggsave(g2, file = "../Figures/MHB_selection_hindbrain.pdf",
+       height = 3, width = 4)
+```
+
+get convex hull coords for these regions
+
+```{r}
+MHB_coords_mid_ind = chull(subset(boundary_polygons, brain_region != "Hindbrain")[, c("segmentation_vertices_x_global_affine", "segmentation_vertices_y_global_affine")])
+MHB_coords_mid = subset(boundary_polygons, brain_region != "Hindbrain")[MHB_coords_mid_ind,]
+
+MHB_coords_hind_ind = chull(subset(boundary_polygons, brain_region == "Hindbrain")[, c("segmentation_vertices_x_global_affine", "segmentation_vertices_y_global_affine")])
+MHB_coords_hind = subset(boundary_polygons, brain_region == "Hindbrain")[MHB_coords_hind_ind,]
+
+
+g1 + geom_polygon(aes(x = segmentation_vertices_x_global_affine, 
+                      y = -segmentation_vertices_y_global_affine),
+                  data = MHB_coords_mid, inherit.aes = FALSE,
+                  fill = NA, colour = "black", linetype = "dashed", size = 3) + 
+  geom_polygon(aes(x = segmentation_vertices_x_global_affine, 
+                   y = -segmentation_vertices_y_global_affine),
+               data = MHB_coords_hind, inherit.aes = FALSE,
+               fill = NA, colour = "black", linetype = "dashed", size = 3)
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

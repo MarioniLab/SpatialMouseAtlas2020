@@ -52,3 +52,12 @@ E8.5_Han.Rmd
 
 E8.5_Han_Nowotschin.Rmd
 - jointly map data from Nowotschin et al (2019) and Han et al (2020).
+
+E8.5_brain.Rmd
+- subcluster Forebrain/Midbrain/Hindbrain cluster
+
+E8.5_spatial_heterogeneity.Rmd
+- assessing spatial heterogeneity within cell types and within brain subclusters
+
+E8.5_MHB_diffusion.Rmd
+- assessing diffusion map within midbrain-hindbrain boundary region

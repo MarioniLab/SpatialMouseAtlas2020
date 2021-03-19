@@ -1,0 +1,419 @@
+---
+title: "E8.5 seqFISH - Subclustering the brain"
+author: "Shila Ghazanfar"
+date: "07/09/2020"
+output:
+       html_document:
+                     toc: true
+                     toc_float:
+                           collapsed: false
+                           smooth_scroll: false
+                     code_folding: hide
+                     fig_width: 16
+                     fig_height: 12
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      cache = TRUE, cache.lazy = FALSE)
+```
+
+```{r}
+set.seed(2020)
+```
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+library(reshape)
+```
+
+```{r}
+library(SpatialUtils)
+```
+
+# Load spatial data
+
+```{r}
+sce = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+sce <- reNormalise(sce)
+sce
+```
+
+# Add cell type and clustering information
+
+```{r}
+mapping_dt = readRDS("../analysis_output/E8.5/celltype_annotation_refined.Rds")
+colData(sce) <- cbind(colData(sce), mapping_dt[colnames(sce), setdiff(colnames(mapping_dt),colnames(colData(sce)))])
+```
+
+# Load atlas data
+
+```{r}
+atlas = readRDS("../analysis_output/E8.5/atlas_for_celltype_mapping.Rds")
+atlas
+atlas <- scran::computeSumFactors(atlas)
+atlas <- scater::normalize(atlas)
+
+# add the UMAP coords to the colData
+colData(atlas)$UMAP1 <- reducedDim(atlas, "umap")[,1]
+colData(atlas)$UMAP2 <- reducedDim(atlas, "umap")[,2]
+```
+
+# Subset the atlas to Forebrain/Midbrain/Hindbrain and cluster further
+
+```{r}
+atlas_sub = atlas[, atlas$celltype %in% c("Forebrain/Midbrain/Hindbrain")]
+
+if (!file.exists("../analysis_output/E8.5/atlas_cluster_brain_factor.Rds")) {
+  
+  assay(atlas_sub, "cosineNorm") <- cosineNorm(assay(atlas_sub, "logcounts"))
+  
+  stats = modelGeneVar(atlas_sub)
+  hvgs = setdiff(getTopHVGs(stats), "Xist")
+  print(length(hvgs))
+  
+  mbpca = multiBatchPCA(assay(atlas_sub, "cosineNorm"),
+                        batch = atlas_sub$sample,
+                        preserve.single = TRUE,
+                        subset.row = hvgs)
+  reducedDim(atlas_sub, "mbPCA_cosine") <- mbpca[[1]]
+  
+  out = reducedMNN(mbpca[[1]], batch = atlas_sub$sample)
+  
+  reducedDim(atlas_sub, "mbPCA_cosine_MNN") <- out$corrected
+  
+  snn = buildSNNGraph(atlas_sub, use.dimred = "mbPCA_cosine_MNN")
+  clusters_graph = cluster_louvain(snn)
+  clusters = as.numeric(membership(clusters_graph))
+  names(clusters) <- atlas_sub$cell
+  table(clusters, useNA = "always")
+  
+  atlas_sub$cluster_brain = factor(clusters)
+  
+  saveRDS(atlas_sub$cluster_brain,
+          file = "../analysis_output/E8.5/atlas_cluster_brain_factor.Rds")
+} else {
+  atlas_sub$cluster_brain <- readRDS("../analysis_output/E8.5/atlas_cluster_brain_factor.Rds")
+}
+```
+
+```{r}
+ggplot(as.data.frame(colData(atlas_sub)),
+       aes(x = UMAP1, y = UMAP2, colour = cluster_brain)) + 
+  geom_point() + 
+  scale_colour_viridis_d() + 
+  NULL
+```
+
+# Markers for atlas brain subclusters
+
+```{r}
+out = getMarkerArray(atlas_sub,
+                     group = "cluster_brain",
+                     assayName = "logcounts",
+                     block = "sample",
+                     pseudobulk = TRUE)
+
+
+out_DE = getMarkerArray(atlas_sub,
+                     group = "cluster_brain",
+                     assayName = "logcounts",
+                     block = "sample",
+                     pseudobulk = TRUE,
+                     subset = atlas_sub$cluster_brain %in% c(5,6))
+
+markerArrayPlot(out_DE, grouplevel = "5", otherGroupLabel = "6")
+
+
+for (group in dimnames(out)[[2]]) {
+  markerArrayPlot(out,
+                  grouplevel = group,
+                  otherGroupLabel = "all other cells",
+                  LFC = 0.5, FDR = 0.2)
+}
+```
+
+# Closest cells in seqFISH
+
+Ask for each of the atlas brain cells which spatial cells they most closely 
+correspond to
+
+```{r}
+closest = readRDS("../analysis_output/E8.5/E8.5_atlas_closest_spatial_cells_libsize.Rds")
+closest_cell = readRDS("../analysis_output/E8.5/E8.5_closest_atlas_cell_libsize.Rds")
+k.mapped = readRDS("../analysis_output/E8.5/E8.5_naive_k.mapped_libsize.Rds")
+
+k.mapped.brain = vectorMatch(as.character(atlas_sub$cluster_brain),k.mapped,colnames(atlas_sub))
+mapped.brain = apply(k.mapped.brain, 1, getmode, dist = 1:ncol(k.mapped.brain))
+
+sce$mapped.brain <- unlist(mapped.brain)[colnames(sce)]
+sce$mapped.brain[sce$celltype_mapped_refined != "Forebrain/Midbrain/Hindbrain"] <- NA
+
+table(sce$mapped.brain, useNA = "always")
+
+mapped_brain_df = get_MVS_vals(k.mapped.brain)
+sce$mapped.brain.score = mapped_brain_df[, "mapping_score"]
+```
+
+A bit under half of the 10X brain cells are the closest to some spatial cells.
+Take this subset of spatial cells and plot them in space with the brain cluster.
+
+```{r}
+sce_sub = sce[, !is.na(sce$mapped.brain)]
+sce_sub
+
+sort(table(sce_sub$celltype_mapped))
+
+table(sce_sub$mapped.brain, useNA = "always")
+
+table(colnames(sce) %in% colnames(sce_sub), sce$celltype_mapped_refined == "Forebrain/Midbrain/Hindbrain")
+```
+
+A lot of spatial cells map to the same cell in the atlas, which is not so 
+unexpected.
+
+```{r}
+ggplot(as.data.frame(colData(sce_sub)),
+       aes(x = x_global_affine, 
+           y = -y_global_affine)) + 
+  geom_point(aes(colour = mapped.brain),
+             size = 1.5) + 
+  theme_classic() +
+  facet_grid(z ~ embryo) + 
+  coord_fixed() +
+  NULL
+```
+
+
+```{r}
+ggplot(as.data.frame(colData(sce)),
+       aes(x = x_global_affine, 
+           y = -y_global_affine)) + 
+  geom_point(aes(colour = mapped.brain),
+             size = 1.5, alpha = 0.5) + 
+  theme_classic() +
+  facet_grid(z ~ embryo) + 
+  guides(colour = guide_legend(override.aes = list(alpha = 1))) +
+  coord_fixed() +
+  NULL
+```
+
+```{r, fig.width=20, fig.height=30}
+DF = as.data.frame(colData(sce))
+DF <- DF[, setdiff(colnames(df), "mapped.brain")]
+ggplot(subset(as.data.frame(colData(sce)), !is.na(mapped.brain)),
+       aes(x = x_global_affine, 
+           y = -y_global_affine)) + 
+  geom_point(data = DF, colour = "grey",
+             size = 0.1) +
+  geom_point(aes(colour = mapped.brain),
+             size = 1.5, alpha = 0.5) + 
+  theme_classic() +
+  facet_grid(mapped.brain ~ embryo + z) + 
+  guides(colour = guide_legend(override.aes = list(alpha = 1))) +
+  coord_fixed() +
+  NULL
+
+gList = lapply(
+  split.data.frame(as.data.frame(colData(sce_sub)),
+                   interaction(sce_sub$embryo, sce_sub$z)), 
+  function(df) {
+    g = ggplot(df,
+               aes(x = x_global_affine, 
+                   y = -y_global_affine)) + 
+      geom_point(data = subset(
+        DF,
+        # as.data.frame(colData(sce)),
+        embryo %in% unique(df$embryo) &
+          z %in% unique(df$z)), 
+        colour = "grey",
+        size = 0.1) +
+      geom_point(
+        colour = "black",
+        # aes(colour = mapped.brain.score > 0.8),
+        # aes(colour = cluster_brain),
+        size = 1, alpha = 0.5) + 
+      theme_classic() +
+      facet_grid(embryo + z ~ mapped.brain) +
+      # facet_grid(cut(as.numeric(mapped.brain.score),5) ~ mapped.brain) +
+      guides(colour = guide_legend(override.aes = list(alpha = 1))) +
+      coord_fixed() +
+      xlab("") + 
+      ylab("") + 
+      theme(legend.position = "bottom") + 
+      guides(colour = guide_legend(title = "",
+                                   override.aes = list(size = 5, alpha = 1))) + 
+      NULL
+    return(g)
+  })
+
+gList[[1]]
+
+lapply(gList, print)
+
+sapply(names(gList), function(n){
+  ggsave(gList[[n]], file = paste0("../Figures/brain_clusters_spatial_",
+                                   n,
+                                   ".pdf"),
+         height = 6, width = 18)
+})
+```
+
+# Match to brain subclusters in seqFISH
+
+```{r}
+table(sce_sub$cluster, sce_sub$cluster_brain)
+
+table(sce_sub$cluster_sub, sce_sub$cluster_brain)
+
+table(sce_sub$Neural, sce_sub$cluster_brain)
+
+table(sce_sub$celltype_mapped_denoised, sce_sub$cluster_brain)
+```
+
+# Rename brain subclusters
+
+Naming by Tim:
+
+1. Tegmentum
+2. Rhombencephalon 2
+3. Rhombencephalon 3
+4. Mesencephalon
+5. Prosencephalon 2
+6. Prosencephalon 1
+7. Exclude
+8. Rhombencephalon 1
+
+the groups should be ordered in a certain way
+
+
+8. Rhombencephalon 1
+2. Rhombencephalon 2
+3. Rhombencephalon 3
+1. Tegmentum
+4. Mesencephalon
+6. Prosencephalon 1
+5. Prosencephalon 2
+
+
+```{r}
+brain_sub_names = c(
+  "1" = "Tegmentum",
+  "2" = "Rhombencephalon 2",
+  "3" = "Rhombencephalon 3",
+  "4" = "Mesencephalon",
+  "5" = "Prosencephalon 2",
+  "6" = "Prosencephalon 1",
+  "7" = NA,
+  "8" = "Rhombencephalon 1"
+)
+
+brain_sub_names_order = c(
+"Rhombencephalon 1",
+"Rhombencephalon 2",
+"Rhombencephalon 3",
+"Tegmentum",
+"Mesencephalon",
+"Prosencephalon 1",
+"Prosencephalon 2"
+)
+
+sce$mapped.brain_named = brain_sub_names[as.character(sce$mapped.brain)]
+table(sce$mapped.brain_named, useNA = "always")
+names(sce$mapped.brain_named) <- colnames(sce)
+```
+
+# Output the cluster brain info
+
+```{r}
+saveRDS(sce$mapped.brain_named, file = "../analysis_output/E8.5/E8.5_mapped.brain_named.Rds")
+```
+
+# Cell-cell contact map of brain clusters
+
+```{r}
+graph = readRDS("../analysis_output/E8.5/E8.5_neighbourGraph_1.3.Rds")
+
+nperm = 500
+
+sce_sub <- sce[, !is.na(sce$mapped.brain_named)]
+
+out_all = cellCellContact(sce_sub, group = "mapped.brain_named", graph, nperm = nperm)
+g = cellCellContactMap(out_all)
+g
+cellCellContactMap(out_all, order = brain_sub_names_order)
+
+split_categories = interaction(sce_sub$embryo, sce_sub$z)
+sce_sub_split = sapply(unique(split_categories), function(s) {
+  sce_sub[, split_categories == s]
+})
+names(sce_sub_split) <- as.character(unique(split_categories))
+
+outList = lapply(sce_sub_split, cellCellContact, group = "mapped.brain_named", graph = graph, nperm = nperm, plot = FALSE)
+gList = lapply(outList, cellCellContactMap, order = levels(cellCellContactMap(out_all)$data$subcluster_1))
+# wrap_plots(gList)
+gList2 = sapply(names(gList), function(n) gList[[n]] + ggtitle(n), simplify = FALSE)
+g = wrap_plots(gList2)
+# ggsave(g, file = "../Figures/brain_clusters_CCN_all.pdf", height = 18, width = 22)
+
+out_mean = list("obs" = Reduce("+", lapply(outList, "[[", "obs"))/length(outList),
+                "pmat" = Reduce("+", lapply(outList, "[[", "pmat"))/length(outList))
+g = cellCellContactMap(out_mean, order = rev(brain_sub_names_order))
+g
+
+gg = as_ggplot(get_legend(g))
+ggsave(gg, file = "../Figures/cellcellcontact_legend.pdf", 
+       height = 1.5, width = 6)
+
+brain_cols = readRDS("../analysis_output/E8.5/E8.5_brain_subcluster_colours.Rds")
+
+if (FALSE) {
+  h = cellCellContactHeatmap(out_mean, col = brain_cols, split_n = 4)
+  h
+  
+  h = cellCellContactHeatmapTriangle(out_mean, col_ann = brain_cols, split_n = 4)
+  h
+  pdf(file = "../Figures/mapped.brain_named_cellcellcontact.pdf",
+      height = 8, width = 8)
+  print(h)
+  dev.off()
+}
+
+h = cellCellContactHeatmap(out_mean, col = brain_cols, order = brain_sub_names_order)
+h
+
+h = cellCellContactHeatmapTriangle(out_mean, col_ann = brain_cols, order = rev(brain_sub_names_order))
+h
+
+pdf(file = "../Figures/mapped.brain_named_cellcellcontact.pdf",
+    height = 8, width = 8)
+print(h)
+dev.off()
+
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,320 @@
+---
+title: "Generate shiny input files"
+author: "Shila Ghazanfar"
+date: "01/03/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ComplexHeatmap)
+library(ggplot2)
+library(ggrepel)
+library(GGally)
+library(limma)
+library(patchwork)
+library(reshape)
+library(gtools)
+library(scattermore)
+library(gganimate)
+library(ggmap)
+library(randomForest)
+library(batchelor)
+library(igraph)
+library(cowplot)
+library(ggpubr)
+library(Matrix)
+library(grDevices)
+library(reshape)
+```
+
+# Summary
+
+The idea here is to generate the input files necessary for the shiny app, 
+to avoid having to unnecessarily repeat various functions, and so that we do not
+require a latest version of SingleCellExperiment
+
+# Load data objects
+
+```{r}
+# load the functions
+library(SpatialUtils)
+
+# celltype colours
+source("celltype_colours.R")
+
+# load the data
+sce = readRDS("../analysis_output/E8.5/E8.5_sce_filt_unlabelled.Rds")
+sce <- reNormalise(sce)
+
+mapping_dt = readRDS("../analysis_output/E8.5/celltype_annotation_refined.Rds")
+colData(sce) <- cbind(colData(sce), mapping_dt[colnames(sce), setdiff(colnames(mapping_dt),colnames(colData(sce)))])
+```
+
+# Load fastMNN and quantile normalise expression data per embryo and z-stack
+
+```{r}
+if (!file.exists( "../analysis_output/E8.5/exprs_norm.Rds")) {
+    mnn_out = readRDS("../analysis_output/E8.5/E8.5_fastMNN.Rds")
+    mnn_out
+    assay(sce, "fastMNN") <- assay(mnn_out, "reconstructed")
+    
+    sce$embryo_z <- interaction(sce$embryo, sce$z)
+    
+    sce_split = splitSCE(sce, sce$embryo_z)
+    
+    exprs_normList <- lapply(sce_split, function(sce_sub) {
+        mnn = assay(sce_sub, "fastMNN")
+        lcounts = assay(sce_sub, "logcounts")
+        
+        mnn_quantile = mnn
+        
+        for (i in 1:nrow(mnn_quantile)) {
+            
+            vals = mnn_quantile[i,]
+            vals[order(vals)] <- sort(lcounts[i,])
+            vals[lcounts[i,] == 0] <- 0
+            mnn_quantile[i,] <- vals
+            
+        }
+        
+        return(mnn_quantile)
+        
+    })
+    
+    exprs_norm <- do.call(cbind, exprs_normList)[,colnames(sce)]
+    exprs_norm <- as.matrix(exprs_norm)
+    saveRDS(exprs_norm, file = "../analysis_output/E8.5/exprs_norm.Rds")
+} else {
+    exprs_norm = readRDS("../analysis_output/E8.5/exprs_norm.Rds")
+}
+```
+
+# Extract metadata
+
+```{r}
+meta = as.data.frame(colData(sce))
+meta <- updateMesenchymeLabel(meta)
+
+celltypes = sort(as.character(unique(meta$celltype_mapped_refined)))
+```
+
+# Generate boundary polygons
+
+```{r}
+embryos = sort(as.character(unique(meta$embryo)))
+
+zvals = sort(unique(meta$z))
+
+genes = rownames(sce)
+
+metanames = colnames(meta)
+
+boundary_polygons = getSegmentationVerticesDF(
+    as(meta, "DataFrame"),
+    xname = "segmentation_vertices_x_global_affine",
+    yname = "segmentation_vertices_y_global_affine",
+    othercols = c("uniqueID",
+                  "z","embryo",
+                  "celltype_mapped_refined"))
+rownames(boundary_polygons) <- NULL
+
+boundary_polygons$segmentation_vertices_y_global_affine_neg <- -boundary_polygons$segmentation_vertices_y_global_affine
+
+boundary_polygons <- boundary_polygons[,c("uniqueID",
+                                          "z","embryo",
+                                          "celltype_mapped_refined",
+                                          "segmentation_vertices_x_global_affine",
+                                          "segmentation_vertices_y_global_affine_neg")]
+
+boundary_polygons$uniquePoint <- !duplicated(boundary_polygons$uniqueID)
+```
+
+# Split SingleCellExperiment into metadata and expression
+
+```{r}
+exprs = assay(sce, "logcounts")
+
+dim(exprs)
+exprs[1:5,1:5]
+length(celltypes)
+head(celltypes)
+dim(meta)
+head(meta)
+dim(boundary_polygons)
+head(boundary_polygons)
+```
+
+Convert h5 imputed matrix to lower precision, to reduce filesize for shinyapps
+bundle size restriction
+
+```{r}
+library(HDF5Array)
+imp <- HDF5Array(filepath = "../analysis_output/imputation/combined.h5", name = "logcounts")
+if (!file.exists("../analysis_output/imputation/combined_compressed.h5")) {
+    writeHDF5Array(imp, filepath="../analysis_output/imputation/combined_compressed.h5", name="logcounts", H5type="H5T_IEEE_F32LE", level=9)
+}
+```
+
+# generate legend ggplots for app
+
+```{r}
+
+g_leg_list = list()
+
+########## 
+
+for (ttl in c("Imputed gene expression", "Batch-corrected gene expression")) {
+    
+    # get the legend
+    pc_df = data.frame(Expression = 1:10)
+    
+    g_leg_raw = ggplot(pc_df, aes(x = Expression, y = Expression)) + 
+        geom_point(aes(colour = Expression)) + 
+        theme_transparent() + 
+        scale_colour_gradientn(
+            colours = c("gray75","cornflowerblue", "black"),
+            labels = c("Low", "High"), 
+            breaks = range(pc_df$Expression),
+            limits = range(pc_df$Expression)) + 
+        theme(legend.position = "bottom") +
+        theme(legend.text = element_text(size = 10),
+              legend.title = element_text(size = 15)) +
+        guides(color = guide_colourbar(title.position = "top",
+                                       title.hjust = 0.5,
+                                       ticks = FALSE,
+                                       title = ttl,
+                                       barwidth = unit(1.5, "strwidth",
+                                                       data = ttl
+                                       ))) +
+        NULL
+    
+    g_leg = as_ggplot(get_legend(g_leg_raw))
+    g_leg_list[[ttl]] <- g_leg
+    
+}
+
+
+##########
+
+ttl = "Mapped cell type"
+
+# get the legend
+pc_df = data.frame(Expression = meta$celltype_mapped_refined)
+
+g_leg_raw = ggplot(pc_df, aes(x = Expression, y = Expression)) +
+    geom_point(aes(colour = Expression), size = 5) +
+    theme_transparent() +
+    scale_colour_manual(values = celltype_colours) +
+    theme(legend.position = "bottom") +
+    theme(legend.text = element_text(size = 15),
+          legend.title = element_text(size = 20)) +
+    guides(color = guide_legend(title.position = "top",
+                                title.hjust = 0.5,
+                                ticks = FALSE,
+                                title = ttl)) +
+    NULL
+
+g_leg = as_ggplot(get_legend(g_leg_raw))
+g_leg_list[[ttl]] <- g_leg
+```
+
+
+# Output files
+
+The R objects generated go into the apps/data folder locally. We have multiple 
+objects, a genes x cells logcounts matrix (sparse matrix), a cells x features 
+metadata object (data.frame), and a vertices x features boundary polygons 
+object (data.frame), celltypes (character vector), and imputed gene expression
+(h5 file and two character vectors files).
+
+```{r}
+appDir = "../apps/SpatialMouseAtlas/"
+
+if (!file.exists(paste0(appDir, "data"))) {
+    system(paste0("mkdir ", appDir, "data"))
+}
+
+saveRDS(g_leg_list, file = paste0(appDir, "data/g_leg_list.Rds"))
+saveRDS(as(exprs, "sparseMatrix"), file = paste0(appDir, "data/exprs.Rds"))
+saveRDS(as(exprs_norm, "sparseMatrix"), file = paste0(appDir, "data/exprs_norm.Rds"))
+saveRDS(meta, file = paste0(appDir, "data/meta.Rds"))
+saveRDS(genes, file = paste0(appDir, "data/genes.Rds"))
+saveRDS(boundary_polygons, file = paste0(appDir, "data/boundary_polygons.Rds"))
+saveRDS(celltypes, file = paste0(appDir, "data/celltypes.Rds"))
+```
+
+# Take subset of mRNA df
+
+```{r}
+mRNA_df = readRDS("../analysis_output/E8.5/E8.5_mRNA_df_unfiltered.Rds")
+mRNA_df <- mRNA_df[,c("geneID","z","embryo","x_global_affine","y_global_affine")]
+saveRDS(mRNA_df, file = paste0(appDir, "data/mRNA.Rds"))
+```
+
+# Misc
+
+Copy celltype_colours.R to the app directory.
+
+And copy imputed to app directory.
+
+```{r}
+if (!file.exists(paste0(appDir, "celltype_colours.R"))) {
+    system(paste0("cp celltype_colours.R ", appDir))
+}
+if (!file.exists(paste0(appDir, "/data/combined_compressed.h5"))) {
+    system(paste0("cp ../analysis_output/imputation/combined_compressed.h5 ", appDir, "data"))
+}
+system(paste0("cp ../analysis_output/imputation/combined_cnames.Rds ", appDir, "data"))
+system(paste0("cp ../analysis_output/imputation/combined_rnames.Rds ", appDir, "data"))
+
+```
+
+# Save files into content server folder
+
+```{r}
+meta_cols = c("uniqueID", "embryo", "pos", "z", "x_global", "y_global", "x_global_affine", "y_global_affine", "embryo_pos", "embryo_pos_z", "Area", "UMAP1", "UMAP2", "celltype_mapped_refined", "segmentation_vertices_x_global_affine", "segmentation_vertices_y_global_affine")
+
+meta2 = meta[,meta_cols]
+
+saveRDS(meta2, file = "../content/metadata.Rds")
+
+counts = assay(sce, "counts")
+
+saveRDS(as(exprs, "sparseMatrix"), file = "../content/exprs.Rds")
+saveRDS(as(counts, "sparseMatrix"), file = "../content/counts.Rds")
+
+# mRNA
+mRNA_df = readRDS("../analysis_output/E8.5/E8.5_mRNA_df_unfiltered.Rds")
+mRNA_df_content <- mRNA_df[,c("uniqueID", "geneID", "pos", "x", "y", "x_global", "y_global", "x_global_affine", "y_global_affine", "z", "seeds", "intensity")]
+saveRDS(mRNA_df_content, file = "../content/mRNA.Rds")
+
+boundary_polygons = getSegmentationVerticesDF(
+    as(meta, "DataFrame"),
+    xname = "segmentation_vertices_x_global_affine",
+    yname = "segmentation_vertices_y_global_affine",
+    othercols = c("uniqueID",
+                  "z","embryo"))
+rownames(boundary_polygons) <- NULL
+
+saveRDS(boundary_polygons, file = "../content/segmentation_vertices.Rds")
+
+if (!file.exists("../content/combined_compressed.h5")) {
+    system(paste0("cp ../analysis_output/imputation/combined.h5 ", "../content/imputed.h5"))
+}
+system(paste0("cp ../analysis_output/imputation/combined_cnames.Rds ", "../content/imputed_column_names.Rds"))
+system(paste0("cp ../analysis_output/imputation/combined_rnames.Rds ", "../content/imputed_row_names.Rds"))
+```
+
+# Finish
+
+```{r}
+sessionInfo()
+```

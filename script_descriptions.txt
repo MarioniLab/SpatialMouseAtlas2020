@@ -70,3 +70,9 @@ E8.5_spatial_heterogeneity.Rmd
 
 E8.5_MHB_diffusion.Rmd
 - assessing diffusion map within midbrain-hindbrain boundary region
+
+SpatialMouseAtlas_generate.Rmd
+- extract and organise files for Shiny app
+
+E8.5_figures.Rmd
+- generate figure panels

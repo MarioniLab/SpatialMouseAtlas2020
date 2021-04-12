@@ -54,7 +54,7 @@ library(ggpubr)
 Load spatial and segmentation functions.
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 # Load mRNA data and merge
@@ -233,7 +233,7 @@ for (n in names(y_global_segments)) {
   
   if (FALSE) {
     points(out$x,
-         out$y, type = "l", col = "blue")
+           out$y, type = "l", col = "blue")
   }
   
   x_global_segments_affine_rotated[[n]] <- out$x
@@ -302,8 +302,8 @@ for (zval in unique(boundary_polygons$z)) {
   
   g = ggplot(subset(as.data.frame(colData(sce)), z %in% zval)) + 
     geom_point(aes(group = uniqueID,
-                     x = x_global_affine,
-                     y = -y_global_affine), fill = NA, colour = "black") + 
+                   x = x_global_affine,
+                   y = -y_global_affine), fill = NA, colour = "black") + 
     facet_wrap(embryo~., nrow = 3) +
     coord_fixed() +
     theme_classic() +
@@ -358,10 +358,10 @@ mRNA_df$embryo_pos = factor(paste0(mRNA_df$embryo,"_", mRNA_df$pos),
 
 
 cData$embryo_pos_z = factor(paste0(cData$embryo,"_", cData$pos, "_", cData$z),
-                          levels = mixedsort(unique(as.character(paste0(cData$embryo,"_", cData$pos, "_", cData$z)))))
+                            levels = mixedsort(unique(as.character(paste0(cData$embryo,"_", cData$pos, "_", cData$z)))))
 sce$embryo_pos_z <- cData$embryo_pos_z
 mRNA_df$embryo_pos_z = factor(paste0(mRNA_df$embryo,"_", mRNA_df$pos, "_", mRNA_df$z),
-                            levels = mixedsort(unique(as.character(paste0(mRNA_df$embryo,"_", mRNA_df$pos, "_", mRNA_df$z)))))
+                              levels = mixedsort(unique(as.character(paste0(mRNA_df$embryo,"_", mRNA_df$pos, "_", mRNA_df$z)))))
 ```
 
 # Save output

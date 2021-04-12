@@ -40,7 +40,7 @@ library(gganimate)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 # Set sample specific file paths - manual check
@@ -117,7 +117,7 @@ params = list(
 
 # Function to process
 
-Located in SpatialUtils package as `processSeqFISH`.
+Located in functions folder as `processSeqFISH`.
 
 ```{r}
 out = processSeqFISH(params)

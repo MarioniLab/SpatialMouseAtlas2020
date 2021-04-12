@@ -57,7 +57,7 @@ I also contract the cell segmentation for intra-cell quantification.
 Load spatial and segmentation functions
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 # Load data

@@ -47,7 +47,7 @@ library(grDevices)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 ```{r}
@@ -365,7 +365,7 @@ if (FALSE) {
                         batch = batchFactor,
                         subset.row = !(rownames(all_assay) %in% "Xist"),
                         d = 50
-                      
+                        
   )
   
   print("done multibatch PCA")
@@ -619,7 +619,7 @@ joint_df$ctype_mask[joint_df$type == "seqFISH" &
                       # joint_df$confany < 0.25 & 
                       # !joint_df$celltype %in% gut_tube_celltypes 
                       !joint_df$celltype %in% c("Gut tube", "Surface ectoderm") 
-                    ] <- NA
+] <- NA
 ```
 
 ```{r}

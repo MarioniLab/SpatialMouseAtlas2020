@@ -48,7 +48,7 @@ library(RColorBrewer)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 ```{r}
@@ -150,7 +150,7 @@ ggsave(g_leg, file = "../Figures/Mesenchyme_subclusters_legend.pdf",
        height = 3, width = 2)
 
 g_space = ggplot(mes_umap_df_cluster,
-                aes(x = x, y = -y)) + 
+                 aes(x = x, y = -y)) + 
   geom_point(data = data.frame(x = sce$x_global_affine, y = sce$y_global_affine, embryo = sce$embryo), colour = "lightgrey", size = 0.5) +
   geom_point(aes(colour = cluster), size = 1) +
   theme_classic() +
@@ -239,28 +239,28 @@ groupValue = "mes_cluster"
 groups = setdiff(sort(unique(colData(sce_sub)[, groupValue])), "")
 
 for (grouplevel in groups) {
+  
+  print(grouplevel)
+  
+  groups2 = setdiff(groups, grouplevel)
+  
+  for (grouplevel2 in groups2) {
     
-    print(grouplevel)
+    print(grouplevel2)
     
-    groups2 = setdiff(groups, grouplevel)
+    ma = getMarkerArray(sce_sub,
+                        # group = "iterMNN_stable",
+                        group = groupValue,
+                        block = "embryo",
+                        subset = colData(sce_sub)[, groupValue] %in% c(grouplevel,
+                                                                       grouplevel2),
+                        pseudobulk = FALSE,
+                        verbose = FALSE)
     
-    for (grouplevel2 in groups2) {
-        
-        print(grouplevel2)
-        
-        ma = getMarkerArray(sce_sub,
-                            # group = "iterMNN_stable",
-                            group = groupValue,
-                            block = "embryo",
-                            subset = colData(sce_sub)[, groupValue] %in% c(grouplevel,
-                                                               grouplevel2),
-                            pseudobulk = FALSE,
-                            verbose = FALSE)
-        
-        discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
-        
-    }
+    discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
     
+  }
+  
 }
 
 discriminating_array_list[["cluster_5"]][["cluster_3"]]["Postn",,]
@@ -284,10 +284,10 @@ meanExp_rel = t(apply(meanExp, 1, function(x)x/max(x)))
 dim(meanExp)
 dim(meanExp_rel)
 h = Heatmap(meanExp_rel, col = c("grey75", "cornflowerblue", "black"),
-        column_split = gsub("embryo[0-9]\\.", "", colnames(meanExp_rel))
-        ,
-        row_split = 5
-        )
+            column_split = gsub("embryo[0-9]\\.", "", colnames(meanExp_rel))
+            ,
+            row_split = 5
+)
 h
 
 pdf(file = "../Figures/Mesenchyme_subclusters_markers.pdf",
@@ -320,27 +320,27 @@ groupValue = "mes_cluster"
 groups = setdiff(sort(unique(colData(sce_sub_imp)[, groupValue])), "")
 
 for (grouplevel in groups) {
+  
+  print(grouplevel)
+  
+  groups2 = setdiff(groups, grouplevel)
+  
+  for (grouplevel2 in groups2) {
     
-    print(grouplevel)
+    print(grouplevel2)
     
-    groups2 = setdiff(groups, grouplevel)
+    ma = getMarkerArray(sce_sub_imp,
+                        group = groupValue,
+                        block = "embryo",
+                        subset = colData(sce_sub_imp)[, groupValue] %in% c(grouplevel,
+                                                                           grouplevel2),
+                        pseudobulk = FALSE,
+                        verbose = FALSE)
     
-    for (grouplevel2 in groups2) {
-        
-        print(grouplevel2)
-        
-        ma = getMarkerArray(sce_sub_imp,
-                            group = groupValue,
-                            block = "embryo",
-                            subset = colData(sce_sub_imp)[, groupValue] %in% c(grouplevel,
-                                                               grouplevel2),
-                            pseudobulk = FALSE,
-                            verbose = FALSE)
-        
-        discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
-        
-    }
+    discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
     
+  }
+  
 }
 
 discriminating_array_list[["cluster_5"]][["cluster_3"]]["Postn",,]
@@ -389,7 +389,7 @@ table(clusters_all, clusters)
 mes_umap_df_cluster$cluster_all = clusters_all[as.character(mes_umap_df_cluster$uniqueID)]
 
 g_space = ggplot(mes_umap_df_cluster,
-                aes(x = x, y = -y)) + 
+                 aes(x = x, y = -y)) + 
   geom_point(data = data.frame(x = sce$x_global_affine, y = sce$y_global_affine, embryo = sce$embryo), colour = "lightgrey", size = 0.5) +
   geom_point(aes(colour = cluster_all), size = 1) +
   theme_classic() +
@@ -425,9 +425,9 @@ for (embryoval in c("embryo1","embryo2","embryo3")) {
                      group = uniqueID,
                      fill = mes_cluster,
                      colour = !is.na(mes_cluster)
-                     ),
-                 size = 0.1,
-                 data = subset(boundary_polygons, embryo == embryoval & z == 2)) +
+    ),
+    size = 0.1,
+    data = subset(boundary_polygons, embryo == embryoval & z == 2)) +
     scale_colour_manual(values = c("TRUE" = "black", "FALSE" = "lightgrey")) +
     facet_grid(z~embryo) +
     scale_fill_manual(values = M_colours_3) +
@@ -475,10 +475,10 @@ for (subregion in subregions) {
   expanded_vertices_list = neighborhood(graph, order = 1, nodes = which(V(graph)$name %in% subregion_cells))
   expanded_vertices = sort(setdiff(unique(unlist(lapply(expanded_vertices_list, function(x) x$name))), subregion_cells))
   length(expanded_vertices)
-
+  
   df_sub = data.frame(uniqueID = expanded_vertices,
-                                   celltype = sce[,expanded_vertices]$celltype_mapped_refined,
-                                   subregion = subregion)
+                      celltype = sce[,expanded_vertices]$celltype_mapped_refined,
+                      subregion = subregion)
   mask_types = c(names(which(table(df_sub$celltype)/nrow(df_sub) < 0.05)), "Low quality")
   df_sub$celltype_mask = as.character(df_sub$celltype)
   df_sub$celltype_mask[df_sub$celltype_mask %in% mask_types] <- "Other"
@@ -527,75 +527,75 @@ genes = c("Tbx18", "Wt1", "Msx1", "Msx2", "Id1", "Gata5", "Sfrp1", "Gata4", "Gat
           "Flrt3","Shisa2")
 
 for (gene in genes) {
-mes_umap_df_gene = mes_umap_df_cluster
-
-if (gene %in% rownames(sce)) {
-  suffix = ""
-  mes_umap_df_gene$gene <- logcounts(sce)[gene,as.character(mes_umap_df_gene$uniqueID)]
-} else {
-  suffix = " (imputed)"
-  mes_umap_df_gene$gene <- imp[gene,as.character(mes_umap_df_gene$uniqueID)]  
-}
-
-g_vio = ggplot(mes_umap_df_gene,
-       aes(x = embryo, y = gene)) + 
-  geom_violin(aes(fill = cluster), scale = "width", draw_quantiles = 0.5) + 
-  theme_classic() +
-  facet_grid(~cluster) + 
-  scale_fill_manual(values = M_colours_2) +
-  ylab("Expression") +
-  guides(fill = guide_legend(title = "")) +
-  xlab("") +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  mes_umap_df_gene = mes_umap_df_cluster
+  
+  if (gene %in% rownames(sce)) {
+    suffix = ""
+    mes_umap_df_gene$gene <- logcounts(sce)[gene,as.character(mes_umap_df_gene$uniqueID)]
+  } else {
+    suffix = " (imputed)"
+    mes_umap_df_gene$gene <- imp[gene,as.character(mes_umap_df_gene$uniqueID)]  
+  }
+  
+  g_vio = ggplot(mes_umap_df_gene,
+                 aes(x = embryo, y = gene)) + 
+    geom_violin(aes(fill = cluster), scale = "width", draw_quantiles = 0.5) + 
+    theme_classic() +
+    facet_grid(~cluster) + 
+    scale_fill_manual(values = M_colours_2) +
+    ylab("Expression") +
+    guides(fill = guide_legend(title = "")) +
+    xlab("") +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
     theme(strip.background = element_rect(colour = "white")) +
-  theme(strip.text = element_blank()) +
-  theme(legend.position = "none") +
-  NULL
-g_vio
-
-g_umap = ggplot(mes_umap_df_gene,
-                aes(x = UMAP1, y = UMAP2)) + 
-  geom_point(aes(colour = gene), size = 1) +
-  theme_classic() +
-  scale_colour_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
-                         midpoint = 0.5*max(mes_umap_df_gene$gene)) +
-  ylab("UMAP2") +
-  guides(colour = guide_colourbar(title = "")) +
-  xlab("UMAP1") +
-   theme(axis.text = element_blank()) +
-  theme(axis.ticks = element_blank()) +
-  theme(legend.position = "none") +
-  coord_fixed() +
-  NULL
-g_umap
-g_umap + facet_grid(~embryo)
-
-g_space = ggplot(mes_umap_df_gene,
-                aes(x = x, y = -y)) + 
-  geom_point(data = data.frame(x = sce$x_global_affine, y = sce$y_global_affine, embryo = sce$embryo), colour = "lightgrey", size = 0.5) +
-  geom_point(aes(colour = gene)) +
-  theme_classic() +
-  facet_grid(~embryo) + 
-  scale_colour_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
-                         midpoint = 0.5*max(mes_umap_df_gene$gene)) +
-  guides(colour = guide_colourbar(title = "")) +
-  xlab("") +
-  ylab("") +
-  theme(legend.position = "none") +
-  coord_fixed() +
-  theme(axis.text = element_blank()) +
-  theme(axis.ticks = element_blank()) +
-  theme(axis.line = element_blank()) +
-  theme(strip.background = element_rect(colour = "white")) +
-  theme(strip.text = element_blank()) +
-  add_scalebar() +
-  NULL
-g_space
-
-g = g_space + g_umap + g_vio + plot_layout(nrow = 1, widths = c(4,1,1.5))
-
-ggsave(g, file = paste0("../Figures/Mesenchyme_subclusters_expression_", gene,".pdf"),
-       height = 5, width = 15)
+    theme(strip.text = element_blank()) +
+    theme(legend.position = "none") +
+    NULL
+  g_vio
+  
+  g_umap = ggplot(mes_umap_df_gene,
+                  aes(x = UMAP1, y = UMAP2)) + 
+    geom_point(aes(colour = gene), size = 1) +
+    theme_classic() +
+    scale_colour_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                           midpoint = 0.5*max(mes_umap_df_gene$gene)) +
+    ylab("UMAP2") +
+    guides(colour = guide_colourbar(title = "")) +
+    xlab("UMAP1") +
+    theme(axis.text = element_blank()) +
+    theme(axis.ticks = element_blank()) +
+    theme(legend.position = "none") +
+    coord_fixed() +
+    NULL
+  g_umap
+  g_umap + facet_grid(~embryo)
+  
+  g_space = ggplot(mes_umap_df_gene,
+                   aes(x = x, y = -y)) + 
+    geom_point(data = data.frame(x = sce$x_global_affine, y = sce$y_global_affine, embryo = sce$embryo), colour = "lightgrey", size = 0.5) +
+    geom_point(aes(colour = gene)) +
+    theme_classic() +
+    facet_grid(~embryo) + 
+    scale_colour_gradient2(low = "gray75", mid = "cornflowerblue", high = "black",
+                           midpoint = 0.5*max(mes_umap_df_gene$gene)) +
+    guides(colour = guide_colourbar(title = "")) +
+    xlab("") +
+    ylab("") +
+    theme(legend.position = "none") +
+    coord_fixed() +
+    theme(axis.text = element_blank()) +
+    theme(axis.ticks = element_blank()) +
+    theme(axis.line = element_blank()) +
+    theme(strip.background = element_rect(colour = "white")) +
+    theme(strip.text = element_blank()) +
+    add_scalebar() +
+    NULL
+  g_space
+  
+  g = g_space + g_umap + g_vio + plot_layout(nrow = 1, widths = c(4,1,1.5))
+  
+  ggsave(g, file = paste0("../Figures/Mesenchyme_subclusters_expression_", gene,".pdf"),
+         height = 5, width = 15)
 }
 ```
 
@@ -708,7 +708,7 @@ order_clusters = colnames(GO_sub)[hclust(dist(t(GO_sub)))$order]
 GO_df_sub$term <- factor(GO_df_sub$term,
                          levels = rev(order_terms))
 GO_df_sub$cluster <- factor(GO_df_sub$cluster,
-                         levels = order_clusters)
+                            levels = order_clusters)
 
 g = ggplot(GO_df_sub, aes(x = cluster, y = term)) + 
   geom_point(aes(size = -log10(pval), colour = qval < 0.05)) + 

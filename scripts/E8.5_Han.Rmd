@@ -48,7 +48,7 @@ library(RColorBrewer)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 ```{r}
@@ -102,18 +102,18 @@ processedFile = "../Data/Han/processed/sce_han_all.Rds"
 
 ```{r}
 if (!file.exists(processedFile)) {
-meta_all_raw = read.delim("../Data/Han/raw/scRNA-Seq_Counts_and_MetaFiles/MetaFile_AllCells_E8.5_E9.0_E9.5_Final.txt", header = TRUE, row.names = 1)
-
-meta_DESM_raw = read.delim("../Data/Han/raw/scRNA-Seq_Counts_and_MetaFiles/MetaFile_DE_and_SM_Cells_E8.5_E9.0_E9.5.txt", header = TRUE, row.names = 1)
-
-head(meta_all_raw)
-dim(meta_all_raw)
-
-head(meta_DESM_raw)
-dim(meta_DESM_raw)
-
-table(rownames(meta_all_raw) %in% rownames(meta_DESM_raw))
-table(rownames(meta_DESM_raw) %in% rownames(meta_all_raw))
+  meta_all_raw = read.delim("../Data/Han/raw/scRNA-Seq_Counts_and_MetaFiles/MetaFile_AllCells_E8.5_E9.0_E9.5_Final.txt", header = TRUE, row.names = 1)
+  
+  meta_DESM_raw = read.delim("../Data/Han/raw/scRNA-Seq_Counts_and_MetaFiles/MetaFile_DE_and_SM_Cells_E8.5_E9.0_E9.5.txt", header = TRUE, row.names = 1)
+  
+  head(meta_all_raw)
+  dim(meta_all_raw)
+  
+  head(meta_DESM_raw)
+  dim(meta_DESM_raw)
+  
+  table(rownames(meta_all_raw) %in% rownames(meta_DESM_raw))
+  table(rownames(meta_DESM_raw) %in% rownames(meta_all_raw))
 }
 ```
 
@@ -124,33 +124,33 @@ annotation data frame.
 ```{r}
 if (!file.exists(processedFile)) {
   table(meta_all_raw[rownames(meta_DESM_raw), "Stages"],
-      meta_DESM_raw[rownames(meta_DESM_raw), "Stages"], useNA = "always")
-identical(as.character(meta_all_raw[rownames(meta_DESM_raw), "Stages"]),
-          as.character(meta_DESM_raw[rownames(meta_DESM_raw), "Stages"]))
-
-table(meta_all_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
-      meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"], useNA = "always")
-
-table(meta_all_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
-      meta_DESM_raw[rownames(meta_DESM_raw), "Type"], useNA = "always")
-
-table(meta_all_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
-      meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"], useNA = "always")
-
-table(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
-      meta_DESM_raw[rownames(meta_DESM_raw), "Type"], useNA = "always")
-
-table(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
-      meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"], useNA = "always")
-
-sum(diag(table(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
-               meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"], useNA = "always")))
-
-head(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"])
-head(meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"])
-
-identical(unlist(lapply(strsplit(as.character(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"]), ":"), "[", 1)),
-          as.character(meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"]))
+        meta_DESM_raw[rownames(meta_DESM_raw), "Stages"], useNA = "always")
+  identical(as.character(meta_all_raw[rownames(meta_DESM_raw), "Stages"]),
+            as.character(meta_DESM_raw[rownames(meta_DESM_raw), "Stages"]))
+  
+  table(meta_all_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+        meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"], useNA = "always")
+  
+  table(meta_all_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+        meta_DESM_raw[rownames(meta_DESM_raw), "Type"], useNA = "always")
+  
+  table(meta_all_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+        meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"], useNA = "always")
+  
+  table(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+        meta_DESM_raw[rownames(meta_DESM_raw), "Type"], useNA = "always")
+  
+  table(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+        meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"], useNA = "always")
+  
+  sum(diag(table(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"],
+                 meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"], useNA = "always")))
+  
+  head(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"])
+  head(meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"])
+  
+  identical(unlist(lapply(strsplit(as.character(meta_DESM_raw[rownames(meta_DESM_raw), "LineageAnnotations"]), ":"), "[", 1)),
+            as.character(meta_DESM_raw[rownames(meta_DESM_raw), "Clusters"]))
 }
 ```
 
@@ -162,20 +162,20 @@ Put all annotation into a single dataframe, for all cells
 
 ```{r}
 if (!file.exists(processedFile)) {
-meta_all = meta_all_raw
-colnames(meta_all) <- c("cell", "stage", "celltype_broad")
-
-meta_all$type <- NULL
-meta_all[rownames(meta_DESM_raw),"type"] <- factor(as.character(meta_DESM_raw$Type))
-
-meta_all$cluster <- NULL
-meta_all[rownames(meta_DESM_raw),"cluster"] <- factor(as.character(meta_DESM_raw$Clusters))
-
-meta_all$cluster_annotated <- NULL
-meta_all[rownames(meta_DESM_raw),"cluster_annotated"] <- factor(as.character(meta_DESM_raw$LineageAnnotations))
-
-dim(meta_all)
-head(meta_all)
+  meta_all = meta_all_raw
+  colnames(meta_all) <- c("cell", "stage", "celltype_broad")
+  
+  meta_all$type <- NULL
+  meta_all[rownames(meta_DESM_raw),"type"] <- factor(as.character(meta_DESM_raw$Type))
+  
+  meta_all$cluster <- NULL
+  meta_all[rownames(meta_DESM_raw),"cluster"] <- factor(as.character(meta_DESM_raw$Clusters))
+  
+  meta_all$cluster_annotated <- NULL
+  meta_all[rownames(meta_DESM_raw),"cluster_annotated"] <- factor(as.character(meta_DESM_raw$LineageAnnotations))
+  
+  dim(meta_all)
+  head(meta_all)
 }
 ```
 
@@ -187,10 +187,10 @@ script located in /nfs/research1/marioni/shila/SpatialEmbryos/Data/Han/raw/scRNA
 ```{r}
 if (!file.exists(processedFile)) {
   counts_all <- readRDS("../Data/Han/raw/scRNA-Seq_Counts_and_MetaFiles/Counts_Matrix_AllCells_E8.5_E9.0_E9.5.Rds")
-dim(counts_all)
-counts_all[1:5,1:5]
-
-identical(colnames(counts_all), rownames(meta_all))
+  dim(counts_all)
+  counts_all[1:5,1:5]
+  
+  identical(colnames(counts_all), rownames(meta_all))
 }
 ```
 
@@ -199,11 +199,11 @@ Generate SingleCellExperiment object for all Han cells and save
 ```{r}
 if (!file.exists(processedFile)) {
   sce_han_raw = SingleCellExperiment(
-  assays = list(counts = counts_all),
-  colData = DataFrame(meta_all))
-
-sce_han_raw
-saveRDS(sce_han_raw, file = "../Data/Han/processed/sce_han_all.Rds")
+    assays = list(counts = counts_all),
+    colData = DataFrame(meta_all))
+  
+  sce_han_raw
+  saveRDS(sce_han_raw, file = "../Data/Han/processed/sce_han_all.Rds")
 }
 ```
 

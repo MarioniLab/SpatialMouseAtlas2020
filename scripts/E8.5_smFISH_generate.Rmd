@@ -29,7 +29,7 @@ require(rhdf5)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 Note that here i call objects by "lower" but there is just a single
@@ -74,26 +74,26 @@ pos_valuesList = list("embryo12" = as.character(0:50),
                       "embryo3" = as.character(0:39))
 
 for (embryofile in embryofiles) {
-
-pos_values = pos_valuesList[[embryofile]]
-
-suffix = "_1_1__coords.tab"
-
-coords_list = sapply(pos_values[1:2],
-                     function(pos_value) {
-                         filename = paste0(get(paste0("smFISH_lower_data_dir_", embryofile)), pos_value, suffix)
-                         out = read.csv(filename, header = FALSE)
-                         colnames(out) <- c("x","y","z")
-                         out$pos = paste0("Pos",pos_value)
-                         return(out)
-                     }, 
-                     simplify = FALSE)
-coords = do.call(rbind, coords_list)
-
-ggplot(coords, aes(x = x, y = y, colour = pos)) + 
-    geom_point() + 
-    theme_classic() + 
-    NULL
+    
+    pos_values = pos_valuesList[[embryofile]]
+    
+    suffix = "_1_1__coords.tab"
+    
+    coords_list = sapply(pos_values[1:2],
+                         function(pos_value) {
+                             filename = paste0(get(paste0("smFISH_lower_data_dir_", embryofile)), pos_value, suffix)
+                             out = read.csv(filename, header = FALSE)
+                             colnames(out) <- c("x","y","z")
+                             out$pos = paste0("Pos",pos_value)
+                             return(out)
+                         }, 
+                         simplify = FALSE)
+    coords = do.call(rbind, coords_list)
+    
+    ggplot(coords, aes(x = x, y = y, colour = pos)) + 
+        geom_point() + 
+        theme_classic() + 
+        NULL
 }
 ```
 
@@ -108,10 +108,10 @@ gene_values = unique(
         lapply(
             lapply(
                 strsplit(list.files(smFISH_lower_data_dir_embryo12, full.names = FALSE, pattern = "coords.tab"),
-                                                 "_"), "[", c(2,3)
-                ), paste0, collapse = "_")
-        )
+                         "_"), "[", c(2,3)
+            ), paste0, collapse = "_")
     )
+)
 gene_values
 length(gene_values)
 

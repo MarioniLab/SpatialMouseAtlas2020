@@ -57,7 +57,7 @@ library(grDevices)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 # Load spatial data

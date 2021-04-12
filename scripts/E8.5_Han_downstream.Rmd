@@ -48,7 +48,7 @@ library(RColorBrewer)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 ```{r}
@@ -160,7 +160,7 @@ bdf = getSegmentationVerticesDF(colData(sce),
 
 g = ggplot(
   subset(bdf, embryo == "embryo1" & z == 2), 
-           aes(x = segmentation_vertices_x_global, y = -segmentation_vertices_y_global)) +
+  aes(x = segmentation_vertices_x_global, y = -segmentation_vertices_y_global)) +
   geom_polygon(aes(group = uniqueID, fill = han_subtype_mask),
                colour = "black", size = 0.1) + 
   theme_classic() +
@@ -212,7 +212,7 @@ DV_class_list = list()
 # first identify cells that are in the foregut region of each embryo
 # then identify cells that are in the dorsal foregut region of each embryo
 for (embryoval in sort(unique(sce$embryo))) {
-
+  
   sce_sub = sce[, sce$embryo == embryoval]
   
   in_foregut = pracma::inpolygon(sce_sub$x_global_affine, -sce_sub$y_global_affine,
@@ -220,34 +220,34 @@ for (embryoval in sort(unique(sce$embryo))) {
                                  gut_dissection[["foregut"]][[embryoval]][["y"]])
   
   in_dorsal_foregut = pracma::inpolygon(sce_sub$x_global_affine, -sce_sub$y_global_affine,
-                                 gut_dissection[["dorsal_foregut"]][[embryoval]][["x"]],
-                                 gut_dissection[["dorsal_foregut"]][[embryoval]][["y"]])
+                                        gut_dissection[["dorsal_foregut"]][[embryoval]][["x"]],
+                                        gut_dissection[["dorsal_foregut"]][[embryoval]][["y"]])
   
   par(mfrow = c(1,2))
   plot(sce_sub$x_global_affine, -sce_sub$y_global_affine, pch = 16, cex = 0.5, asp = 1,
        col = ifelse(sce_sub$celltype_mapped_refined == "Gut tube" & in_dorsal_foregut & in_foregut, "red", "black"),
        main = embryoval)
   
-    plot(sce_sub$x_global_affine, -sce_sub$y_global_affine, pch = 16, cex = 0.5, asp = 1,
+  plot(sce_sub$x_global_affine, -sce_sub$y_global_affine, pch = 16, cex = 0.5, asp = 1,
        col = ifelse(sce_sub$celltype_mapped_refined == "Gut tube" & !in_dorsal_foregut & in_foregut, "red", "black"),
        main = embryoval)
-    
-    names(in_dorsal_foregut) <- colnames(sce_sub)
-    names(in_foregut) <- colnames(sce_sub)
-    
-    DV_class_sub = rep(NA, ncol(sce_sub))
-    names(DV_class_sub) <- colnames(sce_sub)
-    DV_class_sub[sce_sub$celltype_mapped_refined == "Gut tube" & in_dorsal_foregut & in_foregut] <- "Dorsal"
-    DV_class_sub[sce_sub$celltype_mapped_refined == "Gut tube" & !in_dorsal_foregut & in_foregut] <- "Ventral"
-    table(DV_class_sub)
-    
-    par(mfrow = c(1,1))
-    plot(sce_sub$x_global_affine, -sce_sub$y_global_affine, pch = 16, cex = 0.5, asp = 1,
-         col = c("Dorsal" = "red", "Ventral" = "blue")[DV_class_sub],
+  
+  names(in_dorsal_foregut) <- colnames(sce_sub)
+  names(in_foregut) <- colnames(sce_sub)
+  
+  DV_class_sub = rep(NA, ncol(sce_sub))
+  names(DV_class_sub) <- colnames(sce_sub)
+  DV_class_sub[sce_sub$celltype_mapped_refined == "Gut tube" & in_dorsal_foregut & in_foregut] <- "Dorsal"
+  DV_class_sub[sce_sub$celltype_mapped_refined == "Gut tube" & !in_dorsal_foregut & in_foregut] <- "Ventral"
+  table(DV_class_sub)
+  
+  par(mfrow = c(1,1))
+  plot(sce_sub$x_global_affine, -sce_sub$y_global_affine, pch = 16, cex = 0.5, asp = 1,
+       col = c("Dorsal" = "red", "Ventral" = "blue")[DV_class_sub],
        main = embryoval)
-    
-    DV_class_list[[embryoval]] <- DV_class_sub
-    
+  
+  DV_class_list[[embryoval]] <- DV_class_sub
+  
 }
 
 names(DV_class_list) <- NULL
@@ -296,7 +296,7 @@ for (i in 1:length(sce_split)) {
     cells_length = fit0$lambda[reordered_cells]
   }
   
-   # this should be zero
+  # this should be zero
   print(cells_length[reordered_cells[1]])
   
   plot(coords, asp = 1, pch = 16, cex = 0.5, main = i)

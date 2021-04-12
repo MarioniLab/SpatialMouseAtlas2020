@@ -49,7 +49,7 @@ library(scHOT)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 # Load data

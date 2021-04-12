@@ -48,7 +48,7 @@ library(RColorBrewer)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 ```{r}
@@ -200,15 +200,15 @@ Plot just the lung 1 and lung 2 groups, and the additional mesodermal layers sur
 
 ```{r}
 clusterGroups = c(
-    "10" = "Thyroid",
-    "0" = "Thymus",
-    "7" = "Lung 1",
-    "8" = "Lung 2",
-    "9" = "Liver",
-    "3" = "Pancreas 1",
-    "4" = "Pancreas 2",
-    "2" = "Small intestine",
-    "6" = "Large intestine/Colon"
+  "10" = "Thyroid",
+  "0" = "Thymus",
+  "7" = "Lung 1",
+  "8" = "Lung 2",
+  "9" = "Liver",
+  "3" = "Pancreas 1",
+  "4" = "Pancreas 2",
+  "2" = "Small intestine",
+  "6" = "Large intestine/Colon"
 )
 
 AP_pseudo_colours = RColorBrewer::brewer.pal(length(clusterGroups), "Set3")
@@ -283,22 +283,22 @@ bdf = getSegmentationVerticesDF(colData(sce),
                                 othercols = c("uniqueID", "z", "embryo", "lungpancreas_parsed"))
 
 gList = sapply(unique(bdf$embryo), function(emb) {
-g = ggplot(subset(bdf, embryo == emb & z == 2), 
-           aes(x = segmentation_vertices_x_global_affine,
-               y = -segmentation_vertices_y_global_affine)) +
-  geom_polygon(aes(group = uniqueID, fill = lungpancreas_parsed),
-               colour = "black", size = 0.1) + 
-  theme_classic() +
-  scale_fill_manual(values = AP_pseudo_colours, na.value = "lightgrey") +
-  guides(fill = guide_legend(title = "", override.aes = list(size = 0))) +
-  coord_fixed() +
-  xlab("") + 
-  ylab("") +
-  theme(axis.line = element_blank()) + 
-  theme(axis.text = element_blank()) + 
-  theme(axis.ticks = element_blank()) + 
-  NULL
-return(g)
+  g = ggplot(subset(bdf, embryo == emb & z == 2), 
+             aes(x = segmentation_vertices_x_global_affine,
+                 y = -segmentation_vertices_y_global_affine)) +
+    geom_polygon(aes(group = uniqueID, fill = lungpancreas_parsed),
+                 colour = "black", size = 0.1) + 
+    theme_classic() +
+    scale_fill_manual(values = AP_pseudo_colours, na.value = "lightgrey") +
+    guides(fill = guide_legend(title = "", override.aes = list(size = 0))) +
+    coord_fixed() +
+    xlab("") + 
+    ylab("") +
+    theme(axis.line = element_blank()) + 
+    theme(axis.text = element_blank()) + 
+    theme(axis.ticks = element_blank()) + 
+    NULL
+  return(g)
 }, simplify = FALSE)
 
 wrap_plots(gList, nrow = 1)
@@ -329,28 +329,28 @@ groupValue = "lungpancreas_parsed"
 groups = sort(unique(colData(sce_sub_subtype)[, groupValue]))
 
 for (grouplevel in groups) {
+  
+  print(grouplevel)
+  
+  groups2 = setdiff(groups, grouplevel)
+  
+  for (grouplevel2 in groups2) {
     
-    print(grouplevel)
+    print(grouplevel2)
     
-    groups2 = setdiff(groups, grouplevel)
+    ma = getMarkerArray(sce_sub_subtype,
+                        # group = "iterMNN_stable",
+                        group = groupValue,
+                        block = "embryo",
+                        subset = colData(sce_sub_subtype)[, groupValue] %in% c(grouplevel,
+                                                                               grouplevel2),
+                        pseudobulk = FALSE,
+                        verbose = FALSE)
     
-    for (grouplevel2 in groups2) {
-        
-        print(grouplevel2)
-        
-        ma = getMarkerArray(sce_sub_subtype,
-                            # group = "iterMNN_stable",
-                            group = groupValue,
-                            block = "embryo",
-                            subset = colData(sce_sub_subtype)[, groupValue] %in% c(grouplevel,
-                                                               grouplevel2),
-                            pseudobulk = FALSE,
-                            verbose = FALSE)
-        
-        discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
-        
-    }
+    discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
     
+  }
+  
 }
 
 discriminating_array_list[["Lung 1"]][["Lung 2"]]["Shh",,]
@@ -422,12 +422,12 @@ g = markerArrayPlot(discriminating_array_list[["Lung 1"]][["Lung 2"]],
                     LFC = lfc_level)
 
 g = markerArrayPlot2(discriminating_array_list[["Lung 1"]][["Lung 2"]],
-                    grouplevel = "Lung 1",
-                    otherGroupLabel = "Lung 2",
-                    onlyLabelTopRanked = 20,
-                    FDR = fdr_level,
-                    LFC = lfc_level,
-                    sigColours = as.character(AP_pseudo_colours[c("Lung 1", "Lung 2")])) +
+                     grouplevel = "Lung 1",
+                     otherGroupLabel = "Lung 2",
+                     onlyLabelTopRanked = 20,
+                     FDR = fdr_level,
+                     LFC = lfc_level,
+                     sigColours = as.character(AP_pseudo_colours[c("Lung 1", "Lung 2")])) +
   ggtitle("") +
   guides(colour = FALSE, fill = FALSE) + 
   NULL
@@ -449,8 +449,8 @@ df$sigmeso[df$pancreasmeso_FDR < fdr_level & abs(df$pancreasmeso_LFC) > lfc_leve
 df$sigmeso[df$meso_FDR < fdr_level & abs(df$meso_LFC) > lfc_level] <- "Lung"
 df$sigmeso[df$sigmeso == "Lung" & (df$pancreasmeso_FDR < fdr_level & abs(df$pancreasmeso_LFC) > lfc_level)] <- "Both"
 table(df$sigmeso)
-  
-  
+
+
 g1 = ggplot(df, aes(x = pancreasmeso_LFC, y = meso_LFC)) + 
   geom_point(aes(colour = sigmeso)) +
   scale_colour_manual(values = c("Both" = "black", "Pancreas" = "orange",
@@ -475,9 +475,9 @@ g1
 
 ```{r}
 sce_mean = scater::aggregateAcrossCells(sce,
-                                       sce$lungpancreas_parsed,
-                                       average = TRUE,
-                                       use_exprs_values = "logcounts")
+                                        sce$lungpancreas_parsed,
+                                        average = TRUE,
+                                        use_exprs_values = "logcounts")
 
 assay(sce_mean, "logcounts_relative") <- t(apply(assay(sce_mean, "logcounts"), 1, function(x) x/max(x)))
 
@@ -488,19 +488,19 @@ df_sub[is.na(df_sub$sig), "sig"] <- "Not"
 df_sub[is.na(df_sub$sigmeso), "sigmeso"] <- "Not"
 
 rA = rowAnnotation(df = df_sub[rownames(sce_mean_sub),c("sig", "sigmeso")],
-                annotation_name_side = "bottom",
-                col = list("sig" = c("Mesoderm" = "green",
-                                     "Endoderm" = "blue",
-                                     "Both" = "purple",
-                                     "Not" = "black"),
-                           "sigmeso" = c("Pancreas" = "orange",
-                                     "Lung" = "pink",
-                                     "Both" = "coral",
-                                     "Not" = "black")))
+                   annotation_name_side = "bottom",
+                   col = list("sig" = c("Mesoderm" = "green",
+                                        "Endoderm" = "blue",
+                                        "Both" = "purple",
+                                        "Not" = "black"),
+                              "sigmeso" = c("Pancreas" = "orange",
+                                            "Lung" = "pink",
+                                            "Both" = "coral",
+                                            "Not" = "black")))
 
 Heatmap(assay(sce_mean_sub, "logcounts_relative"), col = c("gray75", "cornflowerblue", "black"),
-     
-                row_split = interaction(df_sub[rownames(sce_mean_sub),"sig"],
+        
+        row_split = interaction(df_sub[rownames(sce_mean_sub),"sig"],
                                 df_sub[rownames(sce_mean_sub),"sigmeso"]),
         
         show_row_names = TRUE, right_annotation = rA)
@@ -545,27 +545,27 @@ groupValue = "lung_parsed"
 groups = sort(unique(colData(sce_sub_subtype)[, groupValue]))
 
 for (grouplevel in groups) {
+  
+  print(grouplevel)
+  
+  groups2 = setdiff(groups, grouplevel)
+  
+  for (grouplevel2 in groups2) {
     
-    print(grouplevel)
+    print(grouplevel2)
     
-    groups2 = setdiff(groups, grouplevel)
+    ma = getMarkerArray(sce_sub_subtype,
+                        group = groupValue,
+                        block = "embryo",
+                        subset = colData(sce_sub_subtype)[, groupValue] %in% c(grouplevel,
+                                                                               grouplevel2),
+                        pseudobulk = TRUE,
+                        verbose = FALSE)
     
-    for (grouplevel2 in groups2) {
-        
-        print(grouplevel2)
-        
-        ma = getMarkerArray(sce_sub_subtype,
-                            group = groupValue,
-                            block = "embryo",
-                            subset = colData(sce_sub_subtype)[, groupValue] %in% c(grouplevel,
-                                                               grouplevel2),
-                            pseudobulk = TRUE,
-                            verbose = FALSE)
-        
-        discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
-        
-    }
+    discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
     
+  }
+  
 }
 saveRDS(discriminating_array_list, file = "../analysis_output/E8.5/lung_mesoderm_DE_imputed.Rds")
 
@@ -613,9 +613,9 @@ g + geom_text_repel(aes(label = gene), data = subset(df, abs(Lung1_LFC) > 0.5 | 
   NULL
 
 g1 = g + geom_text_repel(aes(label = gene),
-                    data = subset(df, (abs(Lung1_FDR) < 0.2 & abs(Lung1_LFC) > 0.5) & 
-                                    !(abs(Lung2_FDR) < 0.2 & abs(Lung2_LFC) > 0.5)),
-                    colour = "red") +
+                         data = subset(df, (abs(Lung1_FDR) < 0.2 & abs(Lung1_LFC) > 0.5) & 
+                                         !(abs(Lung2_FDR) < 0.2 & abs(Lung2_LFC) > 0.5)),
+                         colour = "red") +
   ggtitle("Significant in Lung 1 only") +
   NULL
 g1
@@ -629,17 +629,17 @@ g2 = g + geom_text_repel(aes(label = gene),
 g2
 
 g3 = g + geom_text_repel(aes(label = gene), 
-                    data = subset(df, (abs(Lung1_FDR) < 0.2 & abs(Lung1_LFC) > 0.5) | 
-                                    (abs(Lung2_FDR) < 0.2 & abs(Lung2_LFC) > 0.5)),
-                    colour = "red") +
-    ggtitle("Significant in either Lung 1 or Lung 2") +
+                         data = subset(df, (abs(Lung1_FDR) < 0.2 & abs(Lung1_LFC) > 0.5) | 
+                                         (abs(Lung2_FDR) < 0.2 & abs(Lung2_LFC) > 0.5)),
+                         colour = "red") +
+  ggtitle("Significant in either Lung 1 or Lung 2") +
   NULL
 g3 
 
 g4 = g + geom_text_repel(aes(label = gene), 
-                    data = subset(df, (abs(Lung1_FDR) < 0.2 & abs(Lung1_LFC) > 0.5) & 
-                                    (abs(Lung2_FDR) < 0.2 & abs(Lung2_LFC) > 0.5)),
-                    colour = "red") +
+                         data = subset(df, (abs(Lung1_FDR) < 0.2 & abs(Lung1_LFC) > 0.5) & 
+                                         (abs(Lung2_FDR) < 0.2 & abs(Lung2_LFC) > 0.5)),
+                         colour = "red") +
   ggtitle("Significant in both Lung 1 and Lung 2") +
   NULL
 g4
@@ -674,72 +674,72 @@ gList = list()
   genes = c("Shh", "Ptch1", "Jag1", "Notch1")
   for (gene in genes) {
     
-if (gene %in% rownames(sce)) {
-  exp = logcounts(sce)[gene,]
-  type = "Measured"
-} else {
-  exp = rep(NA, ncol(sce))
-  type = "Imputed"
-}
+    if (gene %in% rownames(sce)) {
+      exp = logcounts(sce)[gene,]
+      type = "Measured"
+    } else {
+      exp = rep(NA, ncol(sce))
+      type = "Imputed"
+    }
     
     impExp = imp[gene,colnames(sce)]
     
     if (type == "Measured") {
       impExp <- rep(NA, ncol(sce))
     }
-
-df = data.frame(
-  gene = exp,
-  geneImp = impExp,
-  embryo = sce$embryo,
-  DV_class = sce$DV_class,
-  AP_value = sce$AP_value,
-  closest_gut_tube_subtype = sce$closest_gut_tube_subtype,
-  han_subtype_mask = sce$han_subtype_mask,
-  celltype_mapped_refined = sce$celltype_mapped_refined
-)
-
-df$AP_value_norm = unsplit(tapply(df$AP_value, list(df$embryo, df$DV_class), function(x) x - min(x)),
-                           list(df$embryo, df$DV_class))
-
-df$AP_value_norm_scale = unsplit(tapply(df$AP_value, list(df$embryo, df$DV_class), function(x) (x - min(x))/diff(range(x, na.rm = TRUE))),
-                           list(df$embryo, df$DV_class))
-
-
-df$derm_type = ifelse(substring(df$closest_gut_tube_subtype, 1,4) == "meso", "Mesoderm", "Endoderm")
-
-df_sub = subset(df, !is.na(AP_value))
-df_sub$dermDV <- interaction(df_sub$DV_class, df_sub$derm_type, sep = " ")
-df_sub$dermDV <- factor(as.character(df_sub$dermDV),
-                        levels = c("Dorsal Endoderm", 
-                                   "Dorsal Mesoderm",
-                                   "Ventral Endoderm",
-                                   "Ventral Mesoderm"))
-
-g = ggplot(df_sub, aes(x = AP_value_norm_scale, y = gene,
-                   group = derm_type,
-                   colour = derm_type,
-                   fill = derm_type)) +
-  geom_smooth(data = df_sub[!is.na(df_sub$gene),]) +
-  geom_smooth(aes(y = geneImp), linetype = "dotted", #alpha = 0.1,
-              data = df_sub[!is.na(df_sub$geneImp),]) +
-  facet_grid(~ dermDV, scales = "free") +
-  theme_classic() +
-  ggtitle(gene) + 
-  theme(legend.position = "bottom") + 
-  geom_hline(yintercept = 0) +
-  xlab("") +
-  ylab("Expression") +
-  scale_colour_brewer(palette = "Set1", aesthetics = c("fill", "colour")) +
-  theme(strip.background = element_rect(colour = "white")) + 
-  guides(colour = guide_legend(title = "")) + 
-  guides(fill = guide_legend(title = "")) +
-  theme(axis.text.x = element_blank()) +
-  theme(axis.ticks.x = element_blank()) +
-  theme(axis.line.x = element_blank()) +
-  NULL
-g
-gList[[gene]] <- g
+    
+    df = data.frame(
+      gene = exp,
+      geneImp = impExp,
+      embryo = sce$embryo,
+      DV_class = sce$DV_class,
+      AP_value = sce$AP_value,
+      closest_gut_tube_subtype = sce$closest_gut_tube_subtype,
+      han_subtype_mask = sce$han_subtype_mask,
+      celltype_mapped_refined = sce$celltype_mapped_refined
+    )
+    
+    df$AP_value_norm = unsplit(tapply(df$AP_value, list(df$embryo, df$DV_class), function(x) x - min(x)),
+                               list(df$embryo, df$DV_class))
+    
+    df$AP_value_norm_scale = unsplit(tapply(df$AP_value, list(df$embryo, df$DV_class), function(x) (x - min(x))/diff(range(x, na.rm = TRUE))),
+                                     list(df$embryo, df$DV_class))
+    
+    
+    df$derm_type = ifelse(substring(df$closest_gut_tube_subtype, 1,4) == "meso", "Mesoderm", "Endoderm")
+    
+    df_sub = subset(df, !is.na(AP_value))
+    df_sub$dermDV <- interaction(df_sub$DV_class, df_sub$derm_type, sep = " ")
+    df_sub$dermDV <- factor(as.character(df_sub$dermDV),
+                            levels = c("Dorsal Endoderm", 
+                                       "Dorsal Mesoderm",
+                                       "Ventral Endoderm",
+                                       "Ventral Mesoderm"))
+    
+    g = ggplot(df_sub, aes(x = AP_value_norm_scale, y = gene,
+                           group = derm_type,
+                           colour = derm_type,
+                           fill = derm_type)) +
+      geom_smooth(data = df_sub[!is.na(df_sub$gene),]) +
+      geom_smooth(aes(y = geneImp), linetype = "dotted", #alpha = 0.1,
+                  data = df_sub[!is.na(df_sub$geneImp),]) +
+      facet_grid(~ dermDV, scales = "free") +
+      theme_classic() +
+      ggtitle(gene) + 
+      theme(legend.position = "bottom") + 
+      geom_hline(yintercept = 0) +
+      xlab("") +
+      ylab("Expression") +
+      scale_colour_brewer(palette = "Set1", aesthetics = c("fill", "colour")) +
+      theme(strip.background = element_rect(colour = "white")) + 
+      guides(colour = guide_legend(title = "")) + 
+      guides(fill = guide_legend(title = "")) +
+      theme(axis.text.x = element_blank()) +
+      theme(axis.ticks.x = element_blank()) +
+      theme(axis.line.x = element_blank()) +
+      NULL
+    g
+    gList[[gene]] <- g
   }
 }
 

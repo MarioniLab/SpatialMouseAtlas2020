@@ -48,10 +48,7 @@ library(reshape)
 ```
 
 ```{r}
-source("celltype_colours.R")
-source("spatial_functions.R")
-source("segmentation_functions.R")
-source("neighbourSegments.R")
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 # Summary

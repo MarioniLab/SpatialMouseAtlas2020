@@ -48,7 +48,7 @@ library(RColorBrewer)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 ```{r}
@@ -426,8 +426,8 @@ joint_df = data.frame(
                          Nowotschin_celltype_broad[,"celltype_mapped"]),
   CellType =  c(rep(NA, n_seqFISH), rep(NA, n_han), as.character(sce_now_sub$CellType)),
   CellType_all = c(seqFISH_CellType[,"celltype_mapped"],
-                    Han_CellType[,"celltype_mapped"],
-                    as.character(sce_now_sub$CellType))
+                   Han_CellType[,"celltype_mapped"],
+                   as.character(sce_now_sub$CellType))
 )
 ```
 

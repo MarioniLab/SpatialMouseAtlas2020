@@ -48,7 +48,7 @@ library(reshape)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 # Load spatial data
@@ -136,11 +136,11 @@ out = getMarkerArray(atlas_sub,
 
 
 out_DE = getMarkerArray(atlas_sub,
-                     group = "cluster_brain",
-                     assayName = "logcounts",
-                     block = "sample",
-                     pseudobulk = TRUE,
-                     subset = atlas_sub$cluster_brain %in% c(5,6))
+                        group = "cluster_brain",
+                        assayName = "logcounts",
+                        block = "sample",
+                        pseudobulk = TRUE,
+                        subset = atlas_sub$cluster_brain %in% c(5,6))
 
 markerArrayPlot(out_DE, grouplevel = "5", otherGroupLabel = "6")
 
@@ -329,13 +329,13 @@ brain_sub_names = c(
 )
 
 brain_sub_names_order = c(
-"Rhombencephalon 1",
-"Rhombencephalon 2",
-"Rhombencephalon 3",
-"Tegmentum",
-"Mesencephalon",
-"Prosencephalon 1",
-"Prosencephalon 2"
+  "Rhombencephalon 1",
+  "Rhombencephalon 2",
+  "Rhombencephalon 3",
+  "Tegmentum",
+  "Mesencephalon",
+  "Prosencephalon 1",
+  "Prosencephalon 2"
 )
 
 sce$mapped.brain_named = brain_sub_names[as.character(sce$mapped.brain)]

@@ -54,7 +54,7 @@ library(data.table)
 Load spatial and segmentation functions.
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 # Load spatial cell and mRNA data
@@ -161,11 +161,11 @@ if (!file.exists("../analysis_output/E8.5/atlas_sub.Rds")) {
   
   # Rename Gut to "Gut tube"
   atlas_sub$celltype_parsed[atlas_sub$celltype_parsed == "Gut"] <- "Gut tube"
-
-    # Rename Def. endoderm to "Definitive endoderm"
+  
+  # Rename Def. endoderm to "Definitive endoderm"
   atlas_sub$celltype_parsed[atlas_sub$celltype_parsed == "Def. endoderm"] <- "Definitive endoderm"
-
-    # Rename Pharyngeal mesoderm to "Splanchnic mesoderm"
+  
+  # Rename Pharyngeal mesoderm to "Splanchnic mesoderm"
   atlas_sub$celltype_parsed[atlas_sub$celltype_parsed == "Pharyngeal mesoderm"] <- "Splanchnic mesoderm"
   
   allCellTypes = sort(unique(atlas_sub$celltype_parsed))
@@ -380,13 +380,13 @@ brain_clusts = rownames(numCellsDF)[numCellsDF$majority_subcluster == "Forebrain
 
 gList = sapply(brain_clusts, function(clustval) {
   g = ggplot(
-  joint_df, aes(x = coord_x, y = coord_y)) +
-  geom_point(aes(colour = clust == clustval), size = 0.2) +
-  scale_colour_manual(values = c("TRUE" = "black", "FALSE" = "lightgrey")) +
-  theme_classic() +
-  theme(legend.position = "none") +
+    joint_df, aes(x = coord_x, y = coord_y)) +
+    geom_point(aes(colour = clust == clustval), size = 0.2) +
+    scale_colour_manual(values = c("TRUE" = "black", "FALSE" = "lightgrey")) +
+    theme_classic() +
+    theme(legend.position = "none") +
     ylim(clustval) +
-  NULL
+    NULL
   return(g + facet_wrap(~split, scales = "free", nrow = 1))
 }, simplify = FALSE)
 g = wrap_plots(gList, ncol = 1)

@@ -54,7 +54,7 @@ library(nord)
 ```
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 # fastMNN expression of each embryo and gene
@@ -285,8 +285,8 @@ joint_UMAP_df[colnames(sce), "celltype"] <- as.character(sce$celltype_mapped_ref
 joint_UMAP_df[colnames(atlas_sub), "celltype"] <- as.character(atlas_sub$celltype_parsed)
 
 joint_UMAP_df$type <- factor(joint_UMAP_df$type, levels = c("Atlas", "seqFISH"),
-                  labels = c("Gastrulation atlas", "seqFISH")
-                  )
+                             labels = c("Gastrulation atlas", "seqFISH")
+)
 
 g = ggplot(subset(joint_UMAP_df, !celltype %in% "Low quality"), aes(x = UMAP1, y = UMAP2, colour = celltype)) + 
   geom_point(size = 0.5) + 
@@ -379,7 +379,7 @@ numcells_df = data.frame(
   numCells = as.numeric(table(df$celltype_mapped_refined)[sort(unique(df$celltype_mapped_refined))])
 )
 g = ggplot(df, 
-       aes(x = celltype_mapped_refined, y = celltype_mapping_score)) + 
+           aes(x = celltype_mapped_refined, y = celltype_mapping_score)) + 
   theme_classic() + 
   geom_violin(aes(fill = celltype_mapped_refined),
               scale = "width", draw_quantiles = 0.5) + 
@@ -433,7 +433,7 @@ plotEmbryo = function(
   boundary_polygons_sub = boundary_polygons_bkg
   
   selectedNames = boundary_polygons_bkg$uniqueID
-
+  
   pc_vals = assay(sce, assayName)[gene_name, ]
   names(pc_vals) <- colnames(sce)
   
@@ -841,10 +841,10 @@ h = cellCellContactHeatmap(list(obs = pmatMean, pmat = pmatMean),
 h
 
 h = cellCellContactHeatmapTriangle(list(obs = pmatMean, pmat = pmatMean),
-                           col_ann = celltype_colours,
-                           exclude = c("Low quality", names(which(table(sce$celltype_mapped_refined) < 100))),
-                           factor = 0.5,
-                           split_n = 12)
+                                   col_ann = celltype_colours,
+                                   exclude = c("Low quality", names(which(table(sce$celltype_mapped_refined) < 100))),
+                                   factor = 0.5,
+                                   split_n = 12)
 h
 
 pdf("../Figures/neighbourhood_celltype_mapped_refined.pdf",
@@ -925,7 +925,7 @@ Same for the smFISH genes
 
 ```{r}
 genes = rownames(read.delim("../Data/smFISH/channel_info/smFISH__gene_key__new.tab",
-                                   header = TRUE, row.names = 1))
+                            header = TRUE, row.names = 1))
 genes %in% rownames(atlas)
 # get expression dotplot for these genes and celltypes
 
@@ -1121,7 +1121,7 @@ for (embryoval in embryovals) {
       if (dermlayer == "Ectoderm") {
         g = g + add_scalebar(border.size = 3)
       }
-
+      
       gList[[paste0(embryoval, ".", zval)]][[dermlayer]] <- g
       
     }
@@ -1216,7 +1216,7 @@ for (embryoval in embryovals) {
         ylab("") +
         theme(plot.title = element_text(hjust = 0.5)) +
         NULL
-
+      
       gList[[paste0(embryoval, ".", zval)]][[celltype]] <- g
       
     }
@@ -1297,107 +1297,107 @@ g_dots_zoom
 ggsave(g_dots_zoom, file = "../Figures/Ttn_dots_zoom.pdf", height = 8, width = 9)
 
 
-  # with black background
-  g = ggplot(subset(boundary_polygons_sub, embryo == "embryo1" & z == 2),
-             aes(x = segmentation_vertices_x_global_affine,
-                 y = -segmentation_vertices_y_global_affine,
-                 fill = Ttn_norm)) + 
-    geom_polygon(aes(group = uniqueID), fill = "black", colour = "darkgrey", size = 0.1) +
-    theme_classic() +
-    scale_fill_gradient2(low = colour_scheme[1], mid = colour_scheme[2], high = colour_scheme[3]) +
-    guides(fill = guide_legend(title = "Ttn normalised logcounts")) +
-    xlab("") +
-    ylab("") +
-    xlim(range_x) +
-    scale_y_continuous(expand = range_y, limits = range_y) +
-    theme(panel.background = element_rect(fill = "black")) +
-    theme(axis.text = element_blank()) + 
-    theme(axis.ticks = element_blank()) +
-    coord_fixed() +
-    NULL
-  
-  g
-  
-  g_dots = g + 
-    geom_point(aes(x = x_global_affine, y = -y_global_affine), 
-               data = subset(mRNA_Ttn, embryo == "embryo1" & z == 2 & geneID == "Ttn"),
-               size = 0.5,
-               alpha = 0.7,
-               colour = "red",
-               shape = 16,
-               inherit.aes = FALSE) + 
-    geom_point(aes(x = x_global_affine, y = -y_global_affine), 
-               data = subset(mRNA_Ttn, embryo == "embryo1" & z == 2 & geneID == "Tbx5"),
-               size = 0.5,
-               alpha = 0.7,
-               colour = "cyan",
-               shape = 16,
-               inherit.aes = FALSE) + 
-    geom_point(aes(x = x_global_affine, y = -y_global_affine), 
-               data = subset(mRNA_Ttn, embryo == "embryo1" & z == 2 & geneID == "Cdh5"),
-               size = 0.5,
-               alpha = 0.7,
-               colour = "green",
-               shape = 16,
-               inherit.aes = FALSE) + 
-    geom_point(aes(x = x_global_affine, y = -y_global_affine), 
-               data = subset(mRNA_Ttn, embryo == "embryo1" & z == 2 & geneID == "Dlk1"),
-               size = 0.5,
-               alpha = 0.7,
-               colour = "orange",
-               shape = 16,
-               inherit.aes = FALSE)
-  g_dots
-  
-  ggsave(g_dots, file = "../Figures/Ttn_dots.pdf", height = 7, width = 6)
-  ggsave(g_dots, file = "../Figures/Ttn_dots.png", height = 7, width = 6)
-  
-  g_dots_box_base = g_dots + 
-    add_scalebar(dist_um = 50,
-                            x = range_x[2], y = -range_y[2] - 0.4,
-                            box.col = "white")
-  g_dots_box = g_dots_box_base + geom_polygon(aes(x = segmentation_vertices_x_global_affine,
-        y = -segmentation_vertices_y_global_affine),
-    data = data.frame(
-      segmentation_vertices_x_global_affine = c(range_x_zoom[c(1,1,2,2)]), 
-      segmentation_vertices_y_global_affine = -c(range_y_zoom[c(1,2,2,1)])),
-    inherit.aes = FALSE, fill = NA, colour = "white", size = 2) +
-    NULL
-  g_dots_box
-  
-  ggsave(g_dots_box, file = "../Figures/Ttn_dots_box.pdf", height = 7, width = 6)
-  ggsave(g_dots_box, file = "../Figures/Ttn_dots_box.png", height = 7, width = 6)
-  
-  g_dots_zoom = g_dots_box_base + xlim(range_x_zoom) + ylim(range_y_zoom) + 
-    add_scalebar(dist_um = 50,
-                 x = range_x_zoom[2] - 0.1*diff(range_x_zoom),
-                 y = -range_y_zoom[2] + 0.1*diff(range_y_zoom),
-                 box.col = "white")
-  
-  g_dots_zoom 
-  
-  ggsave(g_dots_zoom, file = "../Figures/Ttn_dots_zoom.pdf", height = 7/2.4, width = 6/2.4)
-  ggsave(g_dots_zoom, file = "../Figures/Ttn_dots_zoom.png", height = 7/2.4, width = 6/2.4)
-  
-  # transparent labels
-  gene_labels = data.frame(gene = c("Ttn", "Tbx5", "Cdh5" , "Dlk1"),
-                           colour = c("red",  "cyan", "green","orange"),
-                           x = 1:4,
-                           y = 1)
-  
-  g = ggplot(gene_labels, aes(x = x, y = y)) + 
-    geom_text(aes(label = gene, colour = colour), fontface = "italic") + 
-    scale_colour_identity() + 
-    theme_classic() + 
-    theme(plot.background = element_rect(fill = "transparent")) +
-    theme(panel.background = element_rect(fill = "transparent")) +
-    theme(axis.line = element_blank()) + 
-    theme(axis.text = element_blank()) +
-    theme(axis.ticks = element_blank()) +
-    xlab("") +
-    ylab("")
-  g
-  ggsave(g, file = "../Figures/Ttn_dots_legend.pdf", height = 0.5, width = 2)
+# with black background
+g = ggplot(subset(boundary_polygons_sub, embryo == "embryo1" & z == 2),
+           aes(x = segmentation_vertices_x_global_affine,
+               y = -segmentation_vertices_y_global_affine,
+               fill = Ttn_norm)) + 
+  geom_polygon(aes(group = uniqueID), fill = "black", colour = "darkgrey", size = 0.1) +
+  theme_classic() +
+  scale_fill_gradient2(low = colour_scheme[1], mid = colour_scheme[2], high = colour_scheme[3]) +
+  guides(fill = guide_legend(title = "Ttn normalised logcounts")) +
+  xlab("") +
+  ylab("") +
+  xlim(range_x) +
+  scale_y_continuous(expand = range_y, limits = range_y) +
+  theme(panel.background = element_rect(fill = "black")) +
+  theme(axis.text = element_blank()) + 
+  theme(axis.ticks = element_blank()) +
+  coord_fixed() +
+  NULL
+
+g
+
+g_dots = g + 
+  geom_point(aes(x = x_global_affine, y = -y_global_affine), 
+             data = subset(mRNA_Ttn, embryo == "embryo1" & z == 2 & geneID == "Ttn"),
+             size = 0.5,
+             alpha = 0.7,
+             colour = "red",
+             shape = 16,
+             inherit.aes = FALSE) + 
+  geom_point(aes(x = x_global_affine, y = -y_global_affine), 
+             data = subset(mRNA_Ttn, embryo == "embryo1" & z == 2 & geneID == "Tbx5"),
+             size = 0.5,
+             alpha = 0.7,
+             colour = "cyan",
+             shape = 16,
+             inherit.aes = FALSE) + 
+  geom_point(aes(x = x_global_affine, y = -y_global_affine), 
+             data = subset(mRNA_Ttn, embryo == "embryo1" & z == 2 & geneID == "Cdh5"),
+             size = 0.5,
+             alpha = 0.7,
+             colour = "green",
+             shape = 16,
+             inherit.aes = FALSE) + 
+  geom_point(aes(x = x_global_affine, y = -y_global_affine), 
+             data = subset(mRNA_Ttn, embryo == "embryo1" & z == 2 & geneID == "Dlk1"),
+             size = 0.5,
+             alpha = 0.7,
+             colour = "orange",
+             shape = 16,
+             inherit.aes = FALSE)
+g_dots
+
+ggsave(g_dots, file = "../Figures/Ttn_dots.pdf", height = 7, width = 6)
+ggsave(g_dots, file = "../Figures/Ttn_dots.png", height = 7, width = 6)
+
+g_dots_box_base = g_dots + 
+  add_scalebar(dist_um = 50,
+               x = range_x[2], y = -range_y[2] - 0.4,
+               box.col = "white")
+g_dots_box = g_dots_box_base + geom_polygon(aes(x = segmentation_vertices_x_global_affine,
+                                                y = -segmentation_vertices_y_global_affine),
+                                            data = data.frame(
+                                              segmentation_vertices_x_global_affine = c(range_x_zoom[c(1,1,2,2)]), 
+                                              segmentation_vertices_y_global_affine = -c(range_y_zoom[c(1,2,2,1)])),
+                                            inherit.aes = FALSE, fill = NA, colour = "white", size = 2) +
+  NULL
+g_dots_box
+
+ggsave(g_dots_box, file = "../Figures/Ttn_dots_box.pdf", height = 7, width = 6)
+ggsave(g_dots_box, file = "../Figures/Ttn_dots_box.png", height = 7, width = 6)
+
+g_dots_zoom = g_dots_box_base + xlim(range_x_zoom) + ylim(range_y_zoom) + 
+  add_scalebar(dist_um = 50,
+               x = range_x_zoom[2] - 0.1*diff(range_x_zoom),
+               y = -range_y_zoom[2] + 0.1*diff(range_y_zoom),
+               box.col = "white")
+
+g_dots_zoom 
+
+ggsave(g_dots_zoom, file = "../Figures/Ttn_dots_zoom.pdf", height = 7/2.4, width = 6/2.4)
+ggsave(g_dots_zoom, file = "../Figures/Ttn_dots_zoom.png", height = 7/2.4, width = 6/2.4)
+
+# transparent labels
+gene_labels = data.frame(gene = c("Ttn", "Tbx5", "Cdh5" , "Dlk1"),
+                         colour = c("red",  "cyan", "green","orange"),
+                         x = 1:4,
+                         y = 1)
+
+g = ggplot(gene_labels, aes(x = x, y = y)) + 
+  geom_text(aes(label = gene, colour = colour), fontface = "italic") + 
+  scale_colour_identity() + 
+  theme_classic() + 
+  theme(plot.background = element_rect(fill = "transparent")) +
+  theme(panel.background = element_rect(fill = "transparent")) +
+  theme(axis.line = element_blank()) + 
+  theme(axis.text = element_blank()) +
+  theme(axis.ticks = element_blank()) +
+  xlab("") +
+  ylab("")
+g
+ggsave(g, file = "../Figures/Ttn_dots_legend.pdf", height = 0.5, width = 2)
 ```
 
 # Subcellular localisation of Gbx2 and Otx2
@@ -1432,61 +1432,61 @@ boundary_polygons_sub$Ttn_norm <- unsplit(tapply(boundary_polygons_sub$Ttn,
                                                  function(x) x/max(x)),
                                           boundary_polygons_sub$embryo)
 
-  # with black background
-  g = ggplot(subset(boundary_polygons_sub, embryo == "embryo2" & z == 2),
-             aes(x = segmentation_vertices_x_global_affine,
-                 y = -segmentation_vertices_y_global_affine,
-                 fill = Ttn_norm)) + 
-    geom_polygon(fill = "black", colour = "white", size = 0.1, aes(group = uniqueID)) +
-    theme_classic() +
-    scale_fill_gradient2(low = colour_scheme[1], mid = colour_scheme[2], high = colour_scheme[3]) +
-    guides(fill = guide_legend(title = "Ttn normalised logcounts")) +
-    xlab("") +
-    ylab("") +
+# with black background
+g = ggplot(subset(boundary_polygons_sub, embryo == "embryo2" & z == 2),
+           aes(x = segmentation_vertices_x_global_affine,
+               y = -segmentation_vertices_y_global_affine,
+               fill = Ttn_norm)) + 
+  geom_polygon(fill = "black", colour = "white", size = 0.1, aes(group = uniqueID)) +
+  theme_classic() +
+  scale_fill_gradient2(low = colour_scheme[1], mid = colour_scheme[2], high = colour_scheme[3]) +
+  guides(fill = guide_legend(title = "Ttn normalised logcounts")) +
+  xlab("") +
+  ylab("") +
+  
+  xlim(range_x) +
+  ylim(range_y) +
+  
+  theme(panel.background = element_rect(fill = "black")) +
+  theme(plot.background = element_rect(fill = "black")) +
+  theme(axis.text = element_blank()) + 
+  theme(axis.ticks = element_blank()) +
+  coord_fixed() +
+  NULL
 
-    xlim(range_x) +
-    ylim(range_y) +
-    
-    theme(panel.background = element_rect(fill = "black")) +
-    theme(plot.background = element_rect(fill = "black")) +
-    theme(axis.text = element_blank()) + 
-    theme(axis.ticks = element_blank()) +
-    coord_fixed() +
-    NULL
-  
-  g
-  
-  x_range = range(g$data$segmentation_vertices_x_global_affine)
-  y_range = range(g$data$segmentation_vertices_y_global_affine)
-  
-  g_dots = g + 
-    geom_point(aes(x = x_global_affine, y = -y_global_affine), 
-               data = subset(mRNA_Ttn, embryo == "embryo2" & z == 2 & geneID == "Gbx2"),
-               size = 0.75,
-               alpha = 0.7,
-               colour = "purple",
-               shape = 16,
-               inherit.aes = FALSE) + 
-    geom_point(aes(x = x_global_affine, y = -y_global_affine), 
-               data = subset(mRNA_Ttn, embryo == "embryo2" & z == 2 & geneID == "Otx2"),
-               size = 0.75,
-               alpha = 0.7,
-               colour = "orange",
-               shape = 16,
-               inherit.aes = FALSE) + 
-    add_scalebar(dist_um = 50, x = x_range[1] + 0.3*diff(x_range),
-                 y = -mean(y_range[1]) - 0.05, box.col = "white") +
-    NULL
-  g_dots
-  ggsave(g_dots, file = "../Figures/Gbx2_Otx2_dots.pdf", height = 2.5, width = 3.5)
-  ggsave(g_dots, file = "../Figures/Gbx2_Otx2_dots.png", height = 2.5, width = 3.5)
-  
-  saveRDS(c(x = x_range[1] + 0.3*diff(x_range),
-            y = -mean(y_range[1]) - 0.05),
-          file = "../analysis_output/E8.5/MHB_scalebar_location.Rds")
-  
+g
+
+x_range = range(g$data$segmentation_vertices_x_global_affine)
+y_range = range(g$data$segmentation_vertices_y_global_affine)
+
+g_dots = g + 
+  geom_point(aes(x = x_global_affine, y = -y_global_affine), 
+             data = subset(mRNA_Ttn, embryo == "embryo2" & z == 2 & geneID == "Gbx2"),
+             size = 0.75,
+             alpha = 0.7,
+             colour = "purple",
+             shape = 16,
+             inherit.aes = FALSE) + 
+  geom_point(aes(x = x_global_affine, y = -y_global_affine), 
+             data = subset(mRNA_Ttn, embryo == "embryo2" & z == 2 & geneID == "Otx2"),
+             size = 0.75,
+             alpha = 0.7,
+             colour = "orange",
+             shape = 16,
+             inherit.aes = FALSE) + 
+  add_scalebar(dist_um = 50, x = x_range[1] + 0.3*diff(x_range),
+               y = -mean(y_range[1]) - 0.05, box.col = "white") +
+  NULL
+g_dots
+ggsave(g_dots, file = "../Figures/Gbx2_Otx2_dots.pdf", height = 2.5, width = 3.5)
+ggsave(g_dots, file = "../Figures/Gbx2_Otx2_dots.png", height = 2.5, width = 3.5)
+
+saveRDS(c(x = x_range[1] + 0.3*diff(x_range),
+          y = -mean(y_range[1]) - 0.05),
+        file = "../analysis_output/E8.5/MHB_scalebar_location.Rds")
+
 # add dotted line for selected regions
-  
+
 MHB_coords_mid_ind = chull(subset(boundary_polygons_sub, brain_region != "Hindbrain")[, c("segmentation_vertices_x_global_affine", "segmentation_vertices_y_global_affine")])
 MHB_coords_mid = subset(boundary_polygons_sub, brain_region != "Hindbrain")[MHB_coords_mid_ind,]
 
@@ -1495,77 +1495,77 @@ MHB_coords_hind = subset(boundary_polygons_sub, brain_region == "Hindbrain")[MHB
 
 
 g_dots + geom_polygon(aes(x = segmentation_vertices_x_global_affine, 
-                      y = -segmentation_vertices_y_global_affine),
-                  data = MHB_coords_mid, inherit.aes = FALSE,
-                  fill = NA, colour = "orange", linetype = "dashed", size = 1) + 
-   geom_polygon(aes(x = segmentation_vertices_x_global_affine, 
-                      y = -segmentation_vertices_y_global_affine),
-                  data = MHB_coords_hind, inherit.aes = FALSE,
-                  fill = NA, colour = "purple", linetype = "dashed", size = 1)
+                          y = -segmentation_vertices_y_global_affine),
+                      data = MHB_coords_mid, inherit.aes = FALSE,
+                      fill = NA, colour = "orange", linetype = "dashed", size = 1) + 
+  geom_polygon(aes(x = segmentation_vertices_x_global_affine, 
+                   y = -segmentation_vertices_y_global_affine),
+               data = MHB_coords_hind, inherit.aes = FALSE,
+               fill = NA, colour = "purple", linetype = "dashed", size = 1)
 
 
 
 # altogether to reorder
-  g = ggplot(subset(boundary_polygons_sub, embryo == "embryo2" & z == 2),
-             aes(x = segmentation_vertices_x_global_affine,
-                 y = -segmentation_vertices_y_global_affine,
-                 group = uniqueID,
-                 fill = Ttn_norm)) + 
-    theme_classic() +
-    scale_fill_gradient2(low = colour_scheme[1], mid = colour_scheme[2], high = colour_scheme[3]) +
-    guides(fill = guide_legend(title = "Ttn normalised logcounts")) +
-    xlab("") +
-    ylab("") +
+g = ggplot(subset(boundary_polygons_sub, embryo == "embryo2" & z == 2),
+           aes(x = segmentation_vertices_x_global_affine,
+               y = -segmentation_vertices_y_global_affine,
+               group = uniqueID,
+               fill = Ttn_norm)) + 
+  theme_classic() +
+  scale_fill_gradient2(low = colour_scheme[1], mid = colour_scheme[2], high = colour_scheme[3]) +
+  guides(fill = guide_legend(title = "Ttn normalised logcounts")) +
+  xlab("") +
+  ylab("") +
+  
+  xlim(range_x) +
+  ylim(range_y) +
+  
+  theme(panel.background = element_rect(fill = "black")) +
+  theme(plot.background = element_rect(fill = "black")) +
+  theme(axis.text = element_blank()) + 
+  theme(axis.ticks = element_blank()) +
+  coord_fixed() +
+  
+  geom_polygon(aes(x = segmentation_vertices_x_global_affine,
+                   y = -segmentation_vertices_y_global_affine),
+               data = MHB_coords_mid, inherit.aes = FALSE,
+               fill = NA, colour = "orange", linetype = "dotted", size = 0.5) +
+  geom_polygon(aes(x = segmentation_vertices_x_global_affine,
+                   y = -segmentation_vertices_y_global_affine),
+               data = MHB_coords_hind, inherit.aes = FALSE,
+               fill = NA, colour = "purple", linetype = "dashed", size = 0.5) +
+  
+  
+  # cell polygons
+  geom_polygon(fill = NA, aes(colour = brain_region), size = 0.1, show.legend = FALSE) +
+  
+  scale_colour_manual(values = c("Midbrain" = "orange", "Forebrain" = "orange",
+                                 "Hindbrain" = "purple")) +
+  
+  
+  geom_point(aes(x = x_global_affine, y = -y_global_affine), 
+             data = subset(mRNA_Ttn, embryo == "embryo2" & z == 2 & geneID == "Gbx2"),
+             size = 0.75,
+             alpha = 0.7,
+             colour = "purple",
+             shape = 16,
+             inherit.aes = FALSE) + 
+  geom_point(aes(x = x_global_affine, y = -y_global_affine), 
+             data = subset(mRNA_Ttn, embryo == "embryo2" & z == 2 & geneID == "Otx2"),
+             size = 0.75,
+             alpha = 0.7,
+             colour = "orange",
+             shape = 16,
+             inherit.aes = FALSE) + 
+  
+  
+  NULL
 
-    xlim(range_x) +
-    ylim(range_y) +
-    
-    theme(panel.background = element_rect(fill = "black")) +
-    theme(plot.background = element_rect(fill = "black")) +
-    theme(axis.text = element_blank()) + 
-    theme(axis.ticks = element_blank()) +
-    coord_fixed() +
-    
-            geom_polygon(aes(x = segmentation_vertices_x_global_affine,
-                      y = -segmentation_vertices_y_global_affine),
-                  data = MHB_coords_mid, inherit.aes = FALSE,
-                  fill = NA, colour = "orange", linetype = "dotted", size = 0.5) +
-   geom_polygon(aes(x = segmentation_vertices_x_global_affine,
-                      y = -segmentation_vertices_y_global_affine),
-                  data = MHB_coords_hind, inherit.aes = FALSE,
-                  fill = NA, colour = "purple", linetype = "dashed", size = 0.5) +
 
-  
-    # cell polygons
-    geom_polygon(fill = NA, aes(colour = brain_region), size = 0.1, show.legend = FALSE) +
-    
-    scale_colour_manual(values = c("Midbrain" = "orange", "Forebrain" = "orange",
-                                   "Hindbrain" = "purple")) +
-    
-    
-    geom_point(aes(x = x_global_affine, y = -y_global_affine), 
-               data = subset(mRNA_Ttn, embryo == "embryo2" & z == 2 & geneID == "Gbx2"),
-               size = 0.75,
-               alpha = 0.7,
-               colour = "purple",
-               shape = 16,
-               inherit.aes = FALSE) + 
-    geom_point(aes(x = x_global_affine, y = -y_global_affine), 
-               data = subset(mRNA_Ttn, embryo == "embryo2" & z == 2 & geneID == "Otx2"),
-               size = 0.75,
-               alpha = 0.7,
-               colour = "orange",
-               shape = 16,
-               inherit.aes = FALSE) + 
+g
 
-    
-    NULL
-  
-  
-  g
-  
-   ggsave(g, file = "../Figures/Gbx2_Otx2_dots_borders.pdf", height = 2.5, width = 3.5)
-  ggsave(g, file = "../Figures/Gbx2_Otx2_dots_borders.png", height = 2.5, width = 3.5)
+ggsave(g, file = "../Figures/Gbx2_Otx2_dots_borders.pdf", height = 2.5, width = 3.5)
+ggsave(g, file = "../Figures/Gbx2_Otx2_dots_borders.png", height = 2.5, width = 3.5)
 
 ```
 
@@ -1578,15 +1578,15 @@ colours copied from the Nowotschin report
 ```{r}
 # this is done manually, by looking at the Extended Data Figure 
 clusterGroups = c(
-    "10" = "Thyroid",
-    "0" = "Thymus",
-    "7" = "Lung 1",
-    "8" = "Lung 2",
-    "9" = "Liver",
-    "3" = "Pancreas 1",
-    "4" = "Pancreas 2",
-    "2" = "Small intestine",
-    "6" = "Large intestine/Colon"
+  "10" = "Thyroid",
+  "0" = "Thymus",
+  "7" = "Lung 1",
+  "8" = "Lung 2",
+  "9" = "Liver",
+  "3" = "Pancreas 1",
+  "4" = "Pancreas 2",
+  "2" = "Small intestine",
+  "6" = "Large intestine/Colon"
 )
 
 # viridis hard to distinguish
@@ -1646,7 +1646,7 @@ now_joint_df[, "AP_value"] <- A_vals[rownames(now_joint_df)]
 
 now_joint_df_sub = subset(now_joint_df, 
                           TRUE
-                          )
+)
 dim(now_joint_df_sub)
 
 table(now_joint_df_sub$DV_class, useNA = "always")
@@ -1679,23 +1679,23 @@ dvs = c("Ventral", "Dorsal")
 
 for (emb in embs) {
   for (dv in dvs) {
-
-g = ggplot(now_joint_df_sub, aes(x = umap1, y = -umap2)) + 
-  geom_point(colour = "lightgrey", size = 1) + 
-  geom_point(data = subset(now_joint_df_sub, embryo == emb & DV_class == dv),
-             aes(colour = rank(AP_value)), size = 1) +
-  scale_colour_gradient2(low = "yellow", mid = "purple", high = "black",
-                         midpoint = 0.5*length(subset(now_joint_df_sub, embryo == emb & DV_class == dv)$AP_value)) + 
-  theme_classic() + 
-  theme(axis.ticks = element_blank()) + 
-  theme(axis.text = element_blank()) + 
-  xlab("UMAP1") + ylab("UMAP2") +
-  theme(legend.position = "none") +
-  ggtitle(paste0(emb, ": ", dv)) +
-  coord_fixed() + 
-  NULL
-
-gList[[paste0(emb, "_", dv)]] <- g
+    
+    g = ggplot(now_joint_df_sub, aes(x = umap1, y = -umap2)) + 
+      geom_point(colour = "lightgrey", size = 1) + 
+      geom_point(data = subset(now_joint_df_sub, embryo == emb & DV_class == dv),
+                 aes(colour = rank(AP_value)), size = 1) +
+      scale_colour_gradient2(low = "yellow", mid = "purple", high = "black",
+                             midpoint = 0.5*length(subset(now_joint_df_sub, embryo == emb & DV_class == dv)$AP_value)) + 
+      theme_classic() + 
+      theme(axis.ticks = element_blank()) + 
+      theme(axis.text = element_blank()) + 
+      xlab("UMAP1") + ylab("UMAP2") +
+      theme(legend.position = "none") +
+      ggtitle(paste0(emb, ": ", dv)) +
+      coord_fixed() + 
+      NULL
+    
+    gList[[paste0(emb, "_", dv)]] <- g
   }
 }
 
@@ -1726,7 +1726,7 @@ ggsave(gg, file = "../Figures/AP_legend.pdf", height = 1, width = 2)
 
 and select only those clusters with a high number of nowotschin cells
 and with a high proportion of gut tube related cells
-                   
+
 ```{r}
 now_pca = readRDS("../analysis_output/E8.5/nowotschin_joint_mnn_pca.Rds")
 dim(now_pca)
@@ -1748,10 +1748,10 @@ table(now_joint_df$joint_cluster, now_joint_df$type)
 out = list()
 cluster_val = 1
 for (cluster_val in 1:length(unique(clusters))) {
-ind = now_joint_df$joint_cluster == cluster_val & now_joint_df$type == "Nowotschin"
-sumind = sum(ind)
-meanind = mean(now_joint_df$type_lab[ind] == "Nowotschin")
-out[[cluster_val]] <- c(sumind, meanind)
+  ind = now_joint_df$joint_cluster == cluster_val & now_joint_df$type == "Nowotschin"
+  sumind = sum(ind)
+  meanind = mean(now_joint_df$type_lab[ind] == "Nowotschin")
+  out[[cluster_val]] <- c(sumind, meanind)
 }
 out_df = do.call(rbind, out)
 plot(out_df, type = "n")
@@ -1880,9 +1880,9 @@ g = cellCellContactMap(list(obs = pmatMean, pmat = pmatMean),
 g
 
 h = cellCellContactHeatmapTriangle(list(obs = pmatMean, pmat = pmatMean),
-                           col_ann = AP_pseudo_colours,
-                           order = setdiff(names(AP_pseudo_colours), "Large intestine/Colon"),
-                           exclude = "Large intestine/Colon")
+                                   col_ann = AP_pseudo_colours,
+                                   order = setdiff(names(AP_pseudo_colours), "Large intestine/Colon"),
+                                   exclude = "Large intestine/Colon")
 print(h)
 
 pdf("../Figures/neighbourhood_Nowotschin.pdf",
@@ -1891,10 +1891,10 @@ print(h)
 dev.off()
 
 h = cellCellContactHeatmapTriangle(list(obs = pmatMean, pmat = pmatMean),
-                           col_ann = AP_pseudo_colours,
-                           # order = setdiff(names(AP_pseudo_colours), "Large intestine/Colon"),
-                           exclude = "Large intestine/Colon",
-                           split_n = 5)
+                                   col_ann = AP_pseudo_colours,
+                                   # order = setdiff(names(AP_pseudo_colours), "Large intestine/Colon"),
+                                   exclude = "Large intestine/Colon",
+                                   split_n = 5)
 print(h)
 
 pdf("../Figures/neighbourhood_Nowotschin_clustered.pdf",
@@ -2091,27 +2091,27 @@ groupValue = "gut_tube_subtype"
 groups = setdiff(sort(unique(colData(sce)[, groupValue])), "Large intestine/Colon")
 
 for (grouplevel in groups) {
+  
+  print(grouplevel)
+  
+  groups2 = setdiff(groups, grouplevel)
+  
+  for (grouplevel2 in groups2) {
     
-    print(grouplevel)
+    print(grouplevel2)
     
-    groups2 = setdiff(groups, grouplevel)
+    ma = getMarkerArray(sce_sub,
+                        group = groupValue,
+                        block = "embryo",
+                        subset = colData(sce_sub)[, groupValue] %in% c(grouplevel,
+                                                                       grouplevel2),
+                        pseudobulk = TRUE,
+                        verbose = FALSE)
     
-    for (grouplevel2 in groups2) {
-        
-        print(grouplevel2)
-        
-        ma = getMarkerArray(sce_sub,
-                            group = groupValue,
-                            block = "embryo",
-                            subset = colData(sce_sub)[, groupValue] %in% c(grouplevel,
-                                                               grouplevel2),
-                            pseudobulk = TRUE,
-                            verbose = FALSE)
-        
-        discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
-        
-    }
+    discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
     
+  }
+  
 }
 
 discriminating_array_list[["Lung 1"]][["Lung 2"]]["Shh",,]
@@ -2135,7 +2135,7 @@ writeData(wb,
 saveWorkbook(wb,
              file = res_table_file,
              overwrite = TRUE)
- 
+
 
 markerArrayPlot(marker_array,
                 grouplevel = "Lung 1",
@@ -2178,15 +2178,15 @@ for (gene in c("Sox2", "Osr1", "Smoc2", "Tbx1")) {
 }
 
 g = plotEmbryo(sce, 
-                 gene_name = gene, 
-                 assayName = "mask",
-                 quantileNorm = FALSE,
-                 embryo_subset = c("embryo1", "embryo2", "embryo3"),
-                 z_subset = c("2","5"),
-                 outline = TRUE)
-  g
-  ggsave(g, file = paste0("../Figures/corrected_gut_tube_", gene, ".pdf"),
-         height = 30, width = 40)
+               gene_name = gene, 
+               assayName = "mask",
+               quantileNorm = FALSE,
+               embryo_subset = c("embryo1", "embryo2", "embryo3"),
+               z_subset = c("2","5"),
+               outline = TRUE)
+g
+ggsave(g, file = paste0("../Figures/corrected_gut_tube_", gene, ".pdf"),
+       height = 30, width = 40)
 ```
 
 Full embryo digital in situ for the genes Evan imaged with HCR
@@ -2209,7 +2209,7 @@ for (i in 1:length(genesList)) {
   
   for (embryoval in unique(sce$embryo)) {
     for (zval in unique(sce$z)) {
-
+      
       dots_df = subset(mRNA_df, geneID %in% genes & 
                          z == zval &
                          embryo == embryoval)
@@ -2249,43 +2249,43 @@ Full embryo digital in situ for Ttn
 
 ```{r}
 genes = c("Ttn")
-  genes_cols = c("red")
-  
-names(genes_cols) = genes
-  plot(1:length(genes), pch = 16, col = genes_cols, cex = 3)
+genes_cols = c("red")
 
-      embryoval = "embryo1"
-      zval = "2"
-      
-      dots_df = subset(mRNA_df, geneID %in% genes & 
-                         z == zval &
-                         embryo == embryoval)
-      
-      g = plotEmbryo(sce, 
-                     gene_name = rownames(sce)[1], 
-                     assayName = "logcounts",
-                     quantileNorm = FALSE,
-                     embryo_subset = embryoval,
-                     z_subset = zval,
-                     outline = FALSE,
-                     colours = rep("grey12", 3)) + 
-        add_scalebar(box.col = "white")
-      
-      gg = g + 
-        geom_scattermore(aes(x = x_global_affine, y = -y_global_affine, colour = geneID),
-                         data = dots_df,
-                         pointsize = 1.1,
-                         pixels = c(1024,1024)) + 
-        scale_colour_manual(values = genes_cols) + 
-        theme(plot.background = element_rect(fill = "black"),
-              panel.background = element_rect(fill = "black")) + 
-        NULL
-      
-      ggsave(gg, file = paste0("../Figures/full_digitalinsitu_",
-                               paste0(genes, collapse = "_"),
-                               "_",embryoval, "_", zval,
-                               ".pdf"),
-             height = 20, width = 24)
+names(genes_cols) = genes
+plot(1:length(genes), pch = 16, col = genes_cols, cex = 3)
+
+embryoval = "embryo1"
+zval = "2"
+
+dots_df = subset(mRNA_df, geneID %in% genes & 
+                   z == zval &
+                   embryo == embryoval)
+
+g = plotEmbryo(sce, 
+               gene_name = rownames(sce)[1], 
+               assayName = "logcounts",
+               quantileNorm = FALSE,
+               embryo_subset = embryoval,
+               z_subset = zval,
+               outline = FALSE,
+               colours = rep("grey12", 3)) + 
+  add_scalebar(box.col = "white")
+
+gg = g + 
+  geom_scattermore(aes(x = x_global_affine, y = -y_global_affine, colour = geneID),
+                   data = dots_df,
+                   pointsize = 1.1,
+                   pixels = c(1024,1024)) + 
+  scale_colour_manual(values = genes_cols) + 
+  theme(plot.background = element_rect(fill = "black"),
+        panel.background = element_rect(fill = "black")) + 
+  NULL
+
+ggsave(gg, file = paste0("../Figures/full_digitalinsitu_",
+                         paste0(genes, collapse = "_"),
+                         "_",embryoval, "_", zval,
+                         ".pdf"),
+       height = 20, width = 24)
 ```
 
 Expression of genes within a celltype
@@ -2362,14 +2362,14 @@ assay(sce, "fake") <- assay(sce, "logcounts")
 assay(sce, "fake")["Shh",] <- as.numeric(sce$gut_tube)
 
 g = plotEmbryo(sce, 
-                     gene_name = "Shh", 
-                     assayName = "fake",
-                     quantileNorm = FALSE,
-                     embryo_subset = c("embryo1", "embryo2", "embryo3"),
-                     z_subset = c("2", "5"),
-                     outline = FALSE,
-                     colours = c("grey", "red")) + 
-        add_scalebar(box.col = "black")
+               gene_name = "Shh", 
+               assayName = "fake",
+               quantileNorm = FALSE,
+               embryo_subset = c("embryo1", "embryo2", "embryo3"),
+               z_subset = c("2", "5"),
+               outline = FALSE,
+               colours = c("grey", "red")) + 
+  add_scalebar(box.col = "black")
 g
 ggsave(g, file = "../Figures/gut_tube_selection.png", height = 10, width = 15)
 
@@ -2520,7 +2520,7 @@ for (embryoval in embryovals) {
       coord_fixed() +
       theme(legend.position = "none") +
       NULL
-
+    
     gg = g + theme(axis.line = element_blank()) + 
       theme(axis.text = element_blank()) +
       theme(axis.ticks = element_blank()) + 
@@ -2531,13 +2531,13 @@ for (embryoval in embryovals) {
     ggsave(gg, file = paste0("../Figures/cluster_sub_coloured_",
                              embryoval, "_", zval, ".png"),
            height = 10, width = 8 )
-
+    
   }  
 }
 
 
 ggg = as_ggplot(get_legend(gg + theme(legend.position = "right") + 
-                            guides(fill = guide_legend(title = "", ncol = 4))))
+                             guides(fill = guide_legend(title = "", ncol = 4))))
 print(ggg)
 
 ggsave(ggg,  file = "../Figures/cluster_sub_coloured_legend.png",
@@ -2685,10 +2685,10 @@ for (gene in genes) {
   print(gene)
   
   fakegene = rownames(sce)[1]
-
+  
   assay(sce, "mask") <- assay(sce, "logcounts")
   assay(sce, "mask")[fakegene, ] <- imp[gene,colnames(sce)]
-
+  
   g = plotEmbryo(sce, 
                  gene_name = fakegene, 
                  assayName = "mask",
@@ -2707,13 +2707,13 @@ for (gene in genes) {
 
 ```{r}
 brain_sub_names_order = c(
-"Rhombencephalon 1",
-"Rhombencephalon 2",
-"Rhombencephalon 3",
-"Tegmentum",
-"Mesencephalon",
-"Prosencephalon 1",
-"Prosencephalon 2"
+  "Rhombencephalon 1",
+  "Rhombencephalon 2",
+  "Rhombencephalon 3",
+  "Tegmentum",
+  "Mesencephalon",
+  "Prosencephalon 1",
+  "Prosencephalon 2"
 )
 
 mapped.brain_named = readRDS("../analysis_output/E8.5/E8.5_mapped.brain_named.Rds")
@@ -2764,7 +2764,7 @@ for (embryoval in embryovals) {
       coord_fixed() +
       theme(legend.position = "none") +
       NULL
-
+    
     gg = g + theme(axis.line = element_blank()) + 
       theme(axis.text = element_blank()) +
       theme(axis.ticks = element_blank()) + 
@@ -2852,27 +2852,27 @@ groupValue = "mapped.brain_named"
 groups = sort(unique(colData(sce)[, groupValue]))
 
 for (grouplevel in groups) {
+  
+  print(grouplevel)
+  
+  groups2 = setdiff(groups, grouplevel)
+  
+  for (grouplevel2 in groups2) {
     
-    print(grouplevel)
+    print(grouplevel2)
     
-    groups2 = setdiff(groups, grouplevel)
+    ma = getMarkerArray(sce,
+                        group = groupValue,
+                        block = "embryo",
+                        subset = colData(sce)[, groupValue] %in% c(grouplevel,
+                                                                   grouplevel2),
+                        pseudobulk = TRUE,
+                        verbose = FALSE)
     
-    for (grouplevel2 in groups2) {
-        
-        print(grouplevel2)
-        
-        ma = getMarkerArray(sce,
-                            group = groupValue,
-                            block = "embryo",
-                            subset = colData(sce)[, groupValue] %in% c(grouplevel,
-                                                               grouplevel2),
-                            pseudobulk = TRUE,
-                            verbose = FALSE)
-        
-        discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
-        
-    }
+    discriminating_array_list[[grouplevel]][[grouplevel2]] <- ma
     
+  }
+  
 }
 
 
@@ -3126,54 +3126,54 @@ ggsave(g, file = "../Figures/DV_class_gut_barplot.pdf", height = 4, width = 8)
 
 
 for (embryoval in c("embryo1", "embryo2", "embryo3")) {
-
-df1 = subset(df, embryo == embryoval & DV_class == "Dorsal" & gut_tube_subtype != "Large intestine/Colon")
-df1$gut_tube_subtype <- factor(df1$gut_tube_subtype, levels = levels(droplevels(df$gut_tube_subtype)))
-
-g1 = ggplot(df1, aes(y = -AP_value_rank, x = gut_tube_subtype)) + 
-  geom_tile(aes(fill = gut_tube_subtype_conf, colour = gut_tube_subtype_conf)) +
-  theme_classic() +
-  theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 15)) + 
-  theme(legend.position = "none") +
-  scale_colour_gradient(high = "red", low = "black", aesthetics = c("fill", "colour")) + 
-  scale_x_discrete(drop=FALSE) +
-  theme(axis.text.y = element_blank()) +
-  theme(plot.title = element_text(size = 20)) +
-  theme(axis.title.y  = element_text(size = 20)) +
-  theme(axis.ticks = element_blank()) +
-  ylab("AP cell ranking") +
-  xlab("") +
-  ggtitle("Dorsal") +
-  theme(plot.title = element_text(hjust = 0.5)) +
-  scale_y_continuous(limits = rev(c(0,-max(df1$AP_value_rank))), expand = c(0, 0)) +
-  NULL
-
-
-df2 = subset(df, embryo == embryoval & DV_class == "Ventral" & gut_tube_subtype != "Large intestine/Colon")
-df2$gut_tube_subtype <- factor(df2$gut_tube_subtype, levels = levels(droplevels(df$gut_tube_subtype)))
-g2 = ggplot(df2,
-            aes(y = -AP_value_rank, x = gut_tube_subtype)) + 
-  geom_tile(aes(fill = gut_tube_subtype_conf, colour = gut_tube_subtype_conf)) +
-  theme_classic() + 
-  theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 15)) + 
-  scale_colour_gradient(high = "red", low = "black", aesthetics = c("fill", "colour")) + 
-  scale_x_discrete(drop=FALSE) +
-  theme(axis.text.y = element_blank()) +
-  theme(axis.ticks = element_blank()) +
-  ylab("") +
-  theme(plot.title = element_text(size = 20)) +
-      ggtitle("Ventral") +
-  theme(plot.title = element_text(hjust = 0.5)) +
-  xlab("") +
-  guides(fill = guide_colourbar(title = "", direction = "vertical", reverse = FALSE),
-         colour = guide_colourbar(title = "", direction = "vertical", reverse = FALSE)) +
-  scale_y_continuous(limits = rev(c(0,-max(df2$AP_value_rank))), expand = c(0, 0)) +
-  NULL
-
-g = g1 + g2
-g
-
-ggsave(g, file = paste0("../Figures/AP_pseudo_tile_positions_", embryoval, ".pdf"), height = 8, width = 5)
+  
+  df1 = subset(df, embryo == embryoval & DV_class == "Dorsal" & gut_tube_subtype != "Large intestine/Colon")
+  df1$gut_tube_subtype <- factor(df1$gut_tube_subtype, levels = levels(droplevels(df$gut_tube_subtype)))
+  
+  g1 = ggplot(df1, aes(y = -AP_value_rank, x = gut_tube_subtype)) + 
+    geom_tile(aes(fill = gut_tube_subtype_conf, colour = gut_tube_subtype_conf)) +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 15)) + 
+    theme(legend.position = "none") +
+    scale_colour_gradient(high = "red", low = "black", aesthetics = c("fill", "colour")) + 
+    scale_x_discrete(drop=FALSE) +
+    theme(axis.text.y = element_blank()) +
+    theme(plot.title = element_text(size = 20)) +
+    theme(axis.title.y  = element_text(size = 20)) +
+    theme(axis.ticks = element_blank()) +
+    ylab("AP cell ranking") +
+    xlab("") +
+    ggtitle("Dorsal") +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    scale_y_continuous(limits = rev(c(0,-max(df1$AP_value_rank))), expand = c(0, 0)) +
+    NULL
+  
+  
+  df2 = subset(df, embryo == embryoval & DV_class == "Ventral" & gut_tube_subtype != "Large intestine/Colon")
+  df2$gut_tube_subtype <- factor(df2$gut_tube_subtype, levels = levels(droplevels(df$gut_tube_subtype)))
+  g2 = ggplot(df2,
+              aes(y = -AP_value_rank, x = gut_tube_subtype)) + 
+    geom_tile(aes(fill = gut_tube_subtype_conf, colour = gut_tube_subtype_conf)) +
+    theme_classic() + 
+    theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 15)) + 
+    scale_colour_gradient(high = "red", low = "black", aesthetics = c("fill", "colour")) + 
+    scale_x_discrete(drop=FALSE) +
+    theme(axis.text.y = element_blank()) +
+    theme(axis.ticks = element_blank()) +
+    ylab("") +
+    theme(plot.title = element_text(size = 20)) +
+    ggtitle("Ventral") +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    xlab("") +
+    guides(fill = guide_colourbar(title = "", direction = "vertical", reverse = FALSE),
+           colour = guide_colourbar(title = "", direction = "vertical", reverse = FALSE)) +
+    scale_y_continuous(limits = rev(c(0,-max(df2$AP_value_rank))), expand = c(0, 0)) +
+    NULL
+  
+  g = g1 + g2
+  g
+  
+  ggsave(g, file = paste0("../Figures/AP_pseudo_tile_positions_", embryoval, ".pdf"), height = 8, width = 5)
 }
 ```
 
@@ -3190,7 +3190,7 @@ for (embryoval in c("embryo1", "embryo2", "embryo3")) {
     for (type1 in levels(df$gut_tube_subtype)[1:(length(levels(df$gut_tube_subtype))- 1)]) {
       
       type2 = levels(df$gut_tube_subtype)[which(levels(df$gut_tube_subtype) == type1) + 1]
-
+      
       df1 = subset(df, embryo == embryoval & DV_class == "Dorsal")
       df1$gut_tube_subtype <- factor(df1$gut_tube_subtype, levels = levels(df$gut_tube_subtype))
       df2 = subset(df, embryo == embryoval & DV_class == "Ventral")
@@ -3573,8 +3573,8 @@ cData = as.data.frame(colData(sce))
 cData$embryo_pos <- factor(cData$embryo_pos, levels = mixedsort(unique(cData$embryo_pos)))
 
 g = ggplot(cData,
-       aes(x = embryo_pos, y = total,
-           fill = embryo)) +
+           aes(x = embryo_pos, y = total,
+               fill = embryo)) +
   geom_boxplot(outlier.size = 0.5) + 
   ggtitle("Total counts per FOV") +
   theme_classic() +
@@ -3588,8 +3588,8 @@ g
 ggsave(g, file = "../Figures/total_counts.pdf", height = 6, width = 10)
 
 g = ggplot(cData,
-       aes(x = embryo_pos, y = detected,
-           fill = embryo)) +
+           aes(x = embryo_pos, y = detected,
+               fill = embryo)) +
   geom_boxplot(outlier.size = 0.5) + 
   ggtitle("Total genes detected per FOV") +
   theme_classic() +
@@ -3742,7 +3742,7 @@ celltype_props = data.frame(
   spatial_embryo1 = unclass(table(factor(now_joint_sce1$ctype, levels = ctypes_all))),
   spatial_embryo2 = unclass(table(factor(now_joint_sce2$ctype, levels = ctypes_all))),
   spatial_embryo3 = unclass(table(factor(now_joint_sce3$ctype, levels = ctypes_all)))
-  )
+)
 
 plot(1+celltype_props$atlas_all, 1+celltype_props$spatial_all, log = "xy")
 
@@ -3862,18 +3862,18 @@ sm_int_long_5 = sm_int_long_split[["5"]]
 sm_int_long_5$embryo_pos_z <- droplevels(sm_int_long_5$embryo_pos_z)
 
 sm_int_long_2$exp_rel = unsplit(tapply(sm_int_long_2$exp, sm_int_long_2$Gene, function(x) x/max(x)),
-                              sm_int_long_2$Gene)
+                                sm_int_long_2$Gene)
 
 sm_int_long_5$exp_rel = unsplit(tapply(sm_int_long_5$exp, sm_int_long_5$Gene, function(x) x/max(x)),
-                              sm_int_long_5$Gene)
+                                sm_int_long_5$Gene)
 
 sm_int_long_summary_2 = tapply(sm_int_long_2$exp_rel, list(sm_int_long_2$embryo_pos_z,
-                                                   sm_int_long_2$Gene),
-                             mean)
+                                                           sm_int_long_2$Gene),
+                               mean)
 
 g = ggplot(sm_int_long[1:50,], 
-       aes(x = embryo_pos_z,
-           y = exp)) + 
+           aes(x = embryo_pos_z,
+               y = exp)) + 
   theme_classic() + 
   geom_violin() + 
   facet_grid(Gene ~ .) + 
@@ -3908,16 +3908,16 @@ rownames(graph_pos) <- rownames(egraph)
 graph_pos_sub = na.omit(graph_pos[graph_pos[,1] != graph_pos[,2],])
 
 out_high = matrix(NA,
-             ncol = length(sort(unique(pos_sm))),
-             nrow = length(rownames(sm)),
-             dimnames = list(rownames(sm),
-                             sort(unique(pos_sm))))
+                  ncol = length(sort(unique(pos_sm))),
+                  nrow = length(rownames(sm)),
+                  dimnames = list(rownames(sm),
+                                  sort(unique(pos_sm))))
 
 out_low = matrix(NA,
-             ncol = length(sort(unique(pos_sm))),
-             nrow = length(rownames(sm)),
-             dimnames = list(rownames(sm),
-                             sort(unique(pos_sm))))
+                 ncol = length(sort(unique(pos_sm))),
+                 nrow = length(rownames(sm)),
+                 dimnames = list(rownames(sm),
+                                 sort(unique(pos_sm))))
 
 for (fov in sort(unique(pos_sm))) {
   
@@ -3943,10 +3943,10 @@ for (fov in sort(unique(pos_sm))) {
 
 
 h1 = Heatmap(out_high,
-        col = c("grey", "purple", "black"),
-        name = "Maximum mean\ndifference in\nneighbouring\nfield of view",
-        use_raster = TRUE
-        )
+             col = c("grey", "purple", "black"),
+             name = "Maximum mean\ndifference in\nneighbouring\nfield of view",
+             use_raster = TRUE
+)
 h1
 
 pdf(file = "../Figures/smFISH_neighbour_comparison.pdf", height = 10, width = 20)
@@ -3954,7 +3954,7 @@ print(h1)
 dev.off()
 
 h2 = Heatmap(t(out_low),
-        col = rev(c("grey", "purple", "black")))
+             col = rev(c("grey", "purple", "black")))
 
 h1 + h2
 ```

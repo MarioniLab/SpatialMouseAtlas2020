@@ -53,7 +53,7 @@ library(ggpubr)
 Load spatial and segmentation functions.
 
 ```{r}
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 ```
 
 # Load spatial cell and mRNA data

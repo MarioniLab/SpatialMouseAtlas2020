@@ -45,7 +45,7 @@ require a latest version of SingleCellExperiment
 
 ```{r}
 # load the functions
-library(SpatialUtils)
+sapply(list.files("../functions/", full.names = TRUE), source)
 
 # celltype colours
 source("celltype_colours.R")

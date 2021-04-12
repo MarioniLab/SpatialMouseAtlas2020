@@ -6,12 +6,12 @@ Data processing and analysis scripts for our spatial profiling of mouse embryos 
 
 Scripts can be found in the `scripts` folder, with a description and order of running in `script_descriptions.txt`
 
-Code for the Shiny app can be found in the `SpatialMouseAtlas` folder.
+Code for the Shiny app can be found in the `SpatialMouseAtlas` folder. Note that the `data` folder within the app can be downloaded from the Data link (below).
 
 #### Further information
 
-Raw data is available here https://content.cruk.cam.ac.uk/jmlab/SpatialMouseAtlas2020/
+Data: is available to download here https://content.cruk.cam.ac.uk/jmlab/SpatialMouseAtlas2020/
 
-Interactive visualisation (Shiny app) of the data here https://marionilab.cruk.cam.ac.uk/SpatialMouseAtlas/
+Shiny app: Interactive visualisation here https://marionilab.cruk.cam.ac.uk/SpatialMouseAtlas/
 
 Contact: shila.ghazanfar - at - cruk.cam.ac.uk or marioni - at - ebi.ac.uk

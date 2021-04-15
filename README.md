@@ -12,8 +12,10 @@ Data processing and analysis scripts for our spatial profiling of mouse embryos 
 
 #### Further information
 
-Data: is available to download here https://content.cruk.cam.ac.uk/jmlab/SpatialMouseAtlas2020/
+Processed Data Download: is available to download here https://content.cruk.cam.ac.uk/jmlab/SpatialMouseAtlas2020/
 
 Shiny app: Interactive visualisation here https://marionilab.cruk.cam.ac.uk/SpatialMouseAtlas/
+
+Gene expression imputation, midbrain-hindbrain boundary selection, and independent smFISH processing: Scripts are available here https://github.com/MarioniLab/amScripts_mouseEmbryoFISH
 
 Contact: shila.ghazanfar - at - cruk.cam.ac.uk or marioni - at - ebi.ac.uk
